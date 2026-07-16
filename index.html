@@ -6,191 +6,60 @@
 <title>☔ 降雨對照表</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap');
-
   :root {
-    --bg: #0f1117;
-    --surface: #1a1d27;
-    --surface2: #22263a;
-    --border: #2e3350;
-    --accent: #4f8ef7;
-    --accent2: #7c5cfc;
-    --text: #e2e8f0;
-    --muted: #64748b;
-    --green: #10b981;
-    --red: #f43f5e;
+    --bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2e3350;
+    --accent:#4f8ef7;--accent2:#7c5cfc;--text:#e2e8f0;--muted:#64748b;--green:#10b981;--red:#f43f5e;
   }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC',sans-serif;min-height:100vh;padding:20px 16px 40px}
+  header{text-align:center;margin-bottom:24px}
+  .title{font-size:1.5rem;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:4px}
+  .subtitle{font-size:.8rem;color:var(--muted);font-family:'JetBrains Mono',monospace}
+  .date-badge{display:inline-block;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:4px 14px;font-size:.75rem;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-top:10px}
+  .btn-refresh{display:flex;align-items:center;gap:8px;margin:16px auto 8px;padding:10px 24px;background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;border-radius:8px;color:#fff;font-family:'Noto Sans TC',sans-serif;font-size:.9rem;font-weight:700;cursor:pointer;transition:opacity .2s,transform .1s}
+  .btn-refresh:hover{opacity:.85}
+  .btn-refresh:active{transform:scale(.97)}
+  .btn-refresh:disabled{opacity:.5;cursor:not-allowed}
+  .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:none}
+  .loading .spinner{display:block}
+  .loading .btn-icon{display:none}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .status-msg{text-align:center;font-size:.78rem;color:var(--muted);margin-bottom:18px;min-height:18px;font-family:'JetBrains Mono',monospace}
+  .status-msg.ok{color:var(--green)}
+  .status-msg.error{color:var(--red)}
 
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  .day-section{margin-bottom:24px}
+  .day-label{font-size:.85rem;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-bottom:8px;padding-left:4px;letter-spacing:.05em}
 
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Noto Sans TC', sans-serif;
-    min-height: 100vh;
-    padding: 20px 16px 40px;
-  }
+  .table-wrap{overflow-x:auto;border-radius:12px;border:1px solid var(--border);background:var(--surface)}
+  table{width:100%;border-collapse:collapse;font-size:.85rem}
+  thead tr{background:var(--surface2)}
+  th{padding:12px 10px;font-weight:700;text-align:center;font-size:.8rem;letter-spacing:.05em;border-bottom:2px solid var(--border);white-space:nowrap}
+  th.time-col{color:var(--muted);font-family:'JetBrains Mono',monospace}
+  th.loc{color:var(--accent)}
+  tbody tr{border-bottom:1px solid var(--border);transition:background .15s}
+  tbody tr:last-child{border-bottom:none}
+  tbody tr:hover{background:var(--surface2)}
+  .now-row{background:rgba(79,142,247,.08)!important;border-left:3px solid var(--accent)}
+  .now-row td.time-cell{color:var(--accent);font-weight:700}
+  td{padding:10px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:.82rem}
+  td.time-cell{color:var(--muted);font-weight:600;white-space:nowrap}
+  .rain-cell{border-radius:6px;font-weight:600;padding:8px 6px;min-width:52px;display:block;margin:0 auto}
 
-  header { text-align: center; margin-bottom: 24px; }
+  .legend{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:20px;font-size:.72rem;color:var(--muted)}
+  .legend-item{display:flex;align-items:center;gap:5px}
+  .legend-dot{width:12px;height:12px;border-radius:3px}
+  .source-note{text-align:center;margin-top:28px;font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:1.8}
+  .source-note a{color:var(--accent);text-decoration:none}
 
-  .title {
-    font-size: 1.5rem;
-    font-weight: 700;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    margin-bottom: 4px;
-  }
-
-  .subtitle { font-size: 0.8rem; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
-
-  .date-badge {
-    display: inline-block;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 4px 14px;
-    font-size: 0.75rem;
-    color: var(--accent);
-    font-family: 'JetBrains Mono', monospace;
-    margin-top: 10px;
-  }
-
-  .btn-refresh {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 16px auto 8px;
-    padding: 10px 24px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border: none;
-    border-radius: 8px;
-    color: #fff;
-    font-family: 'Noto Sans TC', sans-serif;
-    font-size: 0.9rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: opacity 0.2s, transform 0.1s;
-  }
-  .btn-refresh:hover { opacity: 0.85; }
-  .btn-refresh:active { transform: scale(0.97); }
-  .btn-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .spinner {
-    width: 16px; height: 16px;
-    border: 2px solid rgba(255,255,255,0.3);
-    border-top-color: #fff;
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    display: none;
-  }
-  .loading .spinner { display: block; }
-  .loading .btn-icon { display: none; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  .status-msg {
-    text-align: center;
-    font-size: 0.78rem;
-    color: var(--muted);
-    margin-bottom: 18px;
-    min-height: 18px;
-    font-family: 'JetBrains Mono', monospace;
-  }
-  .status-msg.ok { color: var(--green); }
-  .status-msg.error { color: var(--red); }
-
-  .table-wrap {
-    overflow-x: auto;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-  }
-
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-
-  thead tr { background: var(--surface2); }
-
-  th {
-    padding: 12px 10px;
-    font-weight: 700;
-    text-align: center;
-    font-size: 0.8rem;
-    letter-spacing: 0.05em;
-    border-bottom: 2px solid var(--border);
-    white-space: nowrap;
-  }
-  th.time-col { color: var(--muted); font-family: 'JetBrains Mono', monospace; }
-  th.loc { color: var(--accent); }
-
-  tbody tr {
-    border-bottom: 1px solid var(--border);
-    transition: background 0.15s;
-  }
-  tbody tr:last-child { border-bottom: none; }
-  tbody tr:hover { background: var(--surface2); }
-
-  .now-row {
-    background: rgba(79,142,247,0.08) !important;
-    border-left: 3px solid var(--accent);
-  }
-  .now-row td.time-cell { color: var(--accent); font-weight: 700; }
-
-  td {
-    padding: 10px 8px;
-    text-align: center;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.82rem;
-  }
-  td.time-cell { color: var(--muted); font-weight: 600; white-space: nowrap; }
-
-  .rain-cell {
-    border-radius: 6px;
-    font-weight: 600;
-    padding: 8px 6px;
-    min-width: 52px;
-    display: block;
-    margin: 0 auto;
-  }
-
-  .legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    justify-content: center;
-    margin-top: 20px;
-    font-size: 0.72rem;
-    color: var(--muted);
-  }
-  .legend-item { display: flex; align-items: center; gap: 5px; }
-  .legend-dot { width: 12px; height: 12px; border-radius: 3px; }
-
-  .source-note {
-    text-align: center;
-    margin-top: 28px;
-    font-size: 0.68rem;
-    color: var(--muted);
-    font-family: 'JetBrains Mono', monospace;
-    line-height: 1.8;
-  }
-  .source-note a { color: var(--accent); text-decoration: none; }
-  .source-note a:hover { text-decoration: underline; }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-  }
-  .skeleton .rain-cell {
-    background: var(--surface2) !important;
-    color: transparent !important;
-    animation: pulse 1.2s ease-in-out infinite;
-  }
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .skeleton .rain-cell{background:var(--surface2)!important;color:transparent!important;animation:pulse 1.2s ease-in-out infinite}
 </style>
 </head>
 <body>
-
 <header>
   <div class="title">☔ 降雨機率對照表</div>
-  <div class="subtitle">嘉義・雲林 六地逐小時 · open-meteo 自動更新</div>
+  <div class="subtitle">嘉義・雲林 六地 · 氣象署官方資料</div>
   <div class="date-badge" id="dateBadge">載入中…</div>
 </header>
 
@@ -199,25 +68,9 @@
   <span class="spinner"></span>
   重新整理
 </button>
+<div class="status-msg" id="statusMsg">自動載入中…</div>
 
-<div class="status-msg" id="statusMsg">正在自動載入今日資料…</div>
-
-<div class="table-wrap">
-  <table id="rainTable">
-    <thead>
-      <tr>
-        <th class="time-col">時間</th>
-        <th class="loc">大潭</th>
-        <th class="loc">民雄</th>
-        <th class="loc">溪口</th>
-        <th class="loc">北港</th>
-        <th class="loc">朴子</th>
-        <th class="loc">斗南</th>
-      </tr>
-    </thead>
-    <tbody id="tableBody"></tbody>
-  </table>
-</div>
+<div id="mainContent"></div>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:#12243a"></div>&lt;40%</div>
@@ -227,21 +80,24 @@
 </div>
 
 <div class="source-note">
-  資料來源：<a href="https://open-meteo.com/" target="_blank">open-meteo.com</a>（免費開放 API，每頁載入自動更新）<br>
-  大潭村 · 民雄中樂 · 溪口溪西 · 北港公舘 · 朴子文化 · 斗南中天
+  資料來源：<a href="https://opendata.cwa.gov.tw/" target="_blank">中央氣象署開放資料</a>｜鄉鎮3小時降雨機率預報<br>
+  大潭（新港鄉）· 民雄鄉 · 溪口鄉 · 北港鎮 · 朴子市 · 斗南鎮
 </div>
 
 <script>
+const KEY = 'CWA-1D3F650A-CBDF-4BE9-9DE8-8869409AC7FD';
+
 const LOCATIONS = [
-  { name: '大潭', lat: 23.5635, lon: 120.3812 },
-  { name: '民雄', lat: 23.5521, lon: 120.4298 },
-  { name: '溪口', lat: 23.5823, lon: 120.4601 },
-  { name: '北港', lat: 23.5731, lon: 120.3021 },
-  { name: '朴子', lat: 23.4598, lon: 120.2468 },
-  { name: '斗南', lat: 23.6793, lon: 120.4782 },
+  { name: '大潭', county: 'F-D0047-029', town: '新港鄉' },
+  { name: '民雄', county: 'F-D0047-029', town: '民雄鄉' },
+  { name: '溪口', county: 'F-D0047-029', town: '溪口鄉' },
+  { name: '北港', county: 'F-D0047-025', town: '北港鎮' },
+  { name: '朴子', county: 'F-D0047-029', town: '朴子市' },
+  { name: '斗南', county: 'F-D0047-025', town: '斗南鎮' },
 ];
 
-const HOURS = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00','19:00'];
+// 顯示時段：每天 06:00 ~ 18:00（3小時一格）
+const SHOW_HOURS = ['06:00','09:00','12:00','15:00','18:00'];
 
 function getRainColor(pct) {
   if (pct === null) return { bg: '#1a1d27', text: '#64748b' };
@@ -263,83 +119,131 @@ function setLoading(on) {
   btn.classList.toggle('loading', on);
 }
 
+function pad(n) { return String(n).padStart(2,'0'); }
+
 function updateDateBadge() {
   const now = new Date();
-  const pad = n => String(n).padStart(2, '0');
   document.getElementById('dateBadge').textContent =
-    `${now.getFullYear()}/${pad(now.getMonth()+1)}/${pad(now.getDate())} 更新於 ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    `${now.getFullYear()}/${pad(now.getMonth()+1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())} 更新`;
 }
 
-function renderSkeleton() {
-  document.getElementById('tableBody').innerHTML = HOURS.map(h => `
-    <tr class="skeleton">
-      <td class="time-cell">${h}</td>
-      ${LOCATIONS.map(() => `<td><span class="rain-cell">--</span></td>`).join('')}
-    </tr>`).join('');
-}
-
-async function fetchLocation(loc) {
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&hourly=precipitation_probability&timezone=Asia%2FTaipei&forecast_days=1`;
+async function fetchCounty(code) {
+  const url = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/${code}?Authorization=${KEY}`;
   const res = await fetch(url);
   const data = await res.json();
-  const times = data.hourly.time;
-  const probs = data.hourly.precipitation_probability;
+  return data.records.Locations[0].Location;
+}
+
+function parseLocationData(locations, townName) {
+  const loc = locations.find(l => l.LocationName === townName);
+  if (!loc) return {};
   const result = {};
-  times.forEach((t, i) => {
-    const hhmm = t.slice(11, 16); // "HH:MM"
-    result[hhmm] = probs[i];
-  });
+  for (const we of loc.WeatherElement) {
+    if (we.ElementName === '3小時降雨機率') {
+      for (const t of we.Time) {
+        const dt = t.StartTime; // "2026-07-17T06:00:00+08:00"
+        const dateKey = dt.slice(5,10);  // "07-17"
+        const timeKey = dt.slice(11,16); // "06:00"
+        if (!result[dateKey]) result[dateKey] = {};
+        result[dateKey][timeKey] = parseInt(t.ElementValue[0].ProbabilityOfPrecipitation);
+      }
+    }
+  }
   return result;
+}
+
+function getDayLabel(dateStr) {
+  // dateStr = "07-17"
+  const now = new Date();
+  const year = now.getFullYear();
+  const [m, d] = dateStr.split('-').map(Number);
+  const target = new Date(year, m-1, d);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.round((target - today) / 86400000);
+  const weekdays = ['日','一','二','三','四','五','六'];
+  const wd = weekdays[target.getDay()];
+  const prefix = diff === 0 ? '今天' : diff === 1 ? '明天' : diff === 2 ? '後天' : '';
+  return `${prefix ? prefix + '・' : ''}${m}/${d}（${wd}）`;
 }
 
 function renderTable(allData) {
   const now = new Date();
-  const currentHour = `${String(now.getHours()).padStart(2,'0')}:00`;
+  const currentDateKey = `${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+  const currentHour = `${pad(now.getHours())}:00`;
 
-  document.getElementById('tableBody').innerHTML = HOURS.map(h => {
-    const isNow = h === currentHour;
-    const cells = LOCATIONS.map(loc => {
-      const pct = allData[loc.name]?.[h] ?? null;
-      const { bg, text } = getRainColor(pct);
-      const label = pct !== null ? `${pct}%` : '—';
-      return `<td><span class="rain-cell" style="background:${bg};color:${text}">${label}</span></td>`;
+  // 收集所有日期
+  const allDates = new Set();
+  for (const locData of Object.values(allData)) {
+    for (const dateKey of Object.keys(locData)) {
+      allDates.add(dateKey);
+    }
+  }
+  const sortedDates = Array.from(allDates).sort();
+
+  let html = '';
+  for (const dateKey of sortedDates) {
+    const label = getDayLabel(dateKey);
+    const rows = SHOW_HOURS.map(h => {
+      const isNow = dateKey === currentDateKey && h === currentHour;
+      const cells = LOCATIONS.map(loc => {
+        const pct = allData[loc.name]?.[dateKey]?.[h] ?? null;
+        const { bg, text } = getRainColor(pct);
+        const label = pct !== null ? `${pct}%` : '—';
+        return `<td><span class="rain-cell" style="background:${bg};color:${text}">${label}</span></td>`;
+      }).join('');
+      return `<tr class="${isNow ? 'now-row' : ''}">
+        <td class="time-cell">${h}${isNow ? ' ◀' : ''}</td>
+        ${cells}
+      </tr>`;
     }).join('');
-    return `<tr class="${isNow ? 'now-row' : ''}">
-      <td class="time-cell">${h}${isNow ? ' ◀' : ''}</td>
-      ${cells}
-    </tr>`;
-  }).join('');
+
+    html += `
+      <div class="day-section">
+        <div class="day-label">📅 ${label}</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="time-col">時間</th>
+                ${LOCATIONS.map(l => `<th class="loc">${l.name}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  document.getElementById('mainContent').innerHTML = html;
 }
 
 async function fetchAll() {
   setLoading(true);
-  setStatus('抓取中…');
-  renderSkeleton();
+  setStatus('抓取氣象署資料中…');
   updateDateBadge();
 
-  const allData = {};
-  const errors = [];
+  try {
+    const [chiayi, yunlin] = await Promise.all([
+      fetchCounty('F-D0047-029'),
+      fetchCounty('F-D0047-025'),
+    ]);
 
-  await Promise.all(LOCATIONS.map(async loc => {
-    try {
-      allData[loc.name] = await fetchLocation(loc);
-    } catch(e) {
-      errors.push(loc.name);
-      allData[loc.name] = {};
+    const allData = {};
+    for (const loc of LOCATIONS) {
+      const countyData = loc.county === 'F-D0047-029' ? chiayi : yunlin;
+      allData[loc.name] = parseLocationData(countyData, loc.town);
     }
-  }));
 
-  renderTable(allData);
-  setLoading(false);
-
-  if (errors.length) {
-    setStatus(`完成（${errors.join('、')} 失敗）`, 'error');
-  } else {
-    setStatus('✓ 資料已更新', 'ok');
+    renderTable(allData);
+    setStatus('✓ 資料已更新（中央氣象署）', 'ok');
+  } catch(e) {
+    setStatus('⚠ 抓取失敗，請重試', 'error');
+    console.error(e);
   }
+
+  setLoading(false);
 }
 
-// 自動載入
 fetchAll();
 </script>
 </body>
