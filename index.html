@@ -28,13 +28,16 @@
   .status-msg.ok{color:var(--green)}
   .status-msg.error{color:var(--red)}
 
-  .day-section{margin-bottom:24px}
-  .day-label{font-size:.85rem;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-bottom:8px;padding-left:4px;letter-spacing:.05em}
+  .section-title{font-size:.9rem;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace;margin:24px 0 8px 4px;letter-spacing:.05em}
+  .section-divider{border:none;border-top:1px solid var(--border);margin:28px 0}
+
+  .day-section{margin-bottom:20px}
+  .day-label{font-size:.82rem;font-weight:700;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:6px;padding-left:2px}
 
   .table-wrap{overflow-x:auto;border-radius:12px;border:1px solid var(--border);background:var(--surface)}
   table{width:100%;border-collapse:collapse;font-size:.85rem}
   thead tr{background:var(--surface2)}
-  th{padding:12px 10px;font-weight:700;text-align:center;font-size:.8rem;letter-spacing:.05em;border-bottom:2px solid var(--border);white-space:nowrap}
+  th{padding:10px 8px;font-weight:700;text-align:center;font-size:.78rem;letter-spacing:.05em;border-bottom:2px solid var(--border);white-space:nowrap}
   th.time-col{color:var(--muted);font-family:'JetBrains Mono',monospace}
   th.loc{color:var(--accent)}
   tbody tr{border-bottom:1px solid var(--border);transition:background .15s}
@@ -42,24 +45,22 @@
   tbody tr:hover{background:var(--surface2)}
   .now-row{background:rgba(79,142,247,.08)!important;border-left:3px solid var(--accent)}
   .now-row td.time-cell{color:var(--accent);font-weight:700}
-  td{padding:10px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:.82rem}
+  td{padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:.8rem}
   td.time-cell{color:var(--muted);font-weight:600;white-space:nowrap}
-  .rain-cell{border-radius:6px;font-weight:600;padding:8px 6px;min-width:52px;display:block;margin:0 auto}
+  .rain-cell{border-radius:6px;font-weight:600;padding:7px 4px;min-width:48px;display:block;margin:0 auto}
 
   .legend{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:20px;font-size:.72rem;color:var(--muted)}
   .legend-item{display:flex;align-items:center;gap:5px}
   .legend-dot{width:12px;height:12px;border-radius:3px}
-  .source-note{text-align:center;margin-top:28px;font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:1.8}
+  .source-note{text-align:center;margin-top:24px;font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:1.8}
   .source-note a{color:var(--accent);text-decoration:none}
-
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-  .skeleton .rain-cell{background:var(--surface2)!important;color:transparent!important;animation:pulse 1.2s ease-in-out infinite}
 </style>
 </head>
 <body>
 <header>
   <div class="title">☔ 降雨機率對照表</div>
-  <div class="subtitle">嘉義・雲林 六地 · 氣象署官方資料</div>
+  <div class="subtitle">嘉義・雲林 六地 · 中央氣象署</div>
   <div class="date-badge" id="dateBadge">載入中…</div>
 </header>
 
@@ -70,6 +71,14 @@
 </button>
 <div class="status-msg" id="statusMsg">自動載入中…</div>
 
+<!-- 大潭獨立區 -->
+<div class="section-title">📍 大潭（新港鄉）24小時</div>
+<div id="datanSection"></div>
+
+<hr class="section-divider">
+
+<!-- 六地對照 -->
+<div class="section-title">🗺 六地對照｜今天 + 明天</div>
 <div id="mainContent"></div>
 
 <div class="legend">
@@ -80,7 +89,7 @@
 </div>
 
 <div class="source-note">
-  資料來源：<a href="https://opendata.cwa.gov.tw/" target="_blank">中央氣象署開放資料</a>｜鄉鎮3小時降雨機率預報<br>
+  資料來源：<a href="https://opendata.cwa.gov.tw/" target="_blank">中央氣象署</a> · 鄉鎮3小時降雨機率預報<br>
   大潭（新港鄉）· 民雄鄉 · 溪口鄉 · 北港鎮 · 朴子市 · 斗南鎮
 </div>
 
@@ -96,8 +105,11 @@ const LOCATIONS = [
   { name: '斗南', county: 'F-D0047-025', town: '斗南鎮' },
 ];
 
-// 顯示時段：每天 06:00 ~ 18:00（3小時一格）
-const SHOW_HOURS = ['06:00','09:00','12:00','15:00','18:00'];
+// 六地對照：06:00～23:00（3小時）
+const COMPARE_HOURS = ['06:00','09:00','12:00','15:00','18:00','21:00'];
+
+// 大潭24小時：00:00～21:00（3小時）
+const DATAN_HOURS = ['00:00','03:00','06:00','09:00','12:00','15:00','18:00','21:00'];
 
 function getRainColor(pct) {
   if (pct === null) return { bg: '#1a1d27', text: '#64748b' };
@@ -107,7 +119,9 @@ function getRainColor(pct) {
   return { bg: '#12243a', text: '#4a6080' };
 }
 
-function setStatus(msg, type = '') {
+function pad(n) { return String(n).padStart(2,'0'); }
+
+function setStatus(msg, type='') {
   const el = document.getElementById('statusMsg');
   el.textContent = msg;
   el.className = 'status-msg ' + type;
@@ -119,8 +133,6 @@ function setLoading(on) {
   btn.classList.toggle('loading', on);
 }
 
-function pad(n) { return String(n).padStart(2,'0'); }
-
 function updateDateBadge() {
   const now = new Date();
   document.getElementById('dateBadge').textContent =
@@ -128,8 +140,7 @@ function updateDateBadge() {
 }
 
 async function fetchCounty(code) {
-  const url = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/${code}?Authorization=${KEY}`;
-  const res = await fetch(url);
+  const res = await fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/${code}?Authorization=${KEY}`);
   const data = await res.json();
   return data.records.Locations[0].Location;
 }
@@ -141,9 +152,9 @@ function parseLocationData(locations, townName) {
   for (const we of loc.WeatherElement) {
     if (we.ElementName === '3小時降雨機率') {
       for (const t of we.Time) {
-        const dt = t.StartTime; // "2026-07-17T06:00:00+08:00"
-        const dateKey = dt.slice(5,10);  // "07-17"
-        const timeKey = dt.slice(11,16); // "06:00"
+        const dt = t.StartTime;
+        const dateKey = dt.slice(5,10);
+        const timeKey = dt.slice(11,16);
         if (!result[dateKey]) result[dateKey] = {};
         result[dateKey][timeKey] = parseInt(t.ElementValue[0].ProbabilityOfPrecipitation);
       }
@@ -153,68 +164,69 @@ function parseLocationData(locations, townName) {
 }
 
 function getDayLabel(dateStr) {
-  // dateStr = "07-17"
   const now = new Date();
-  const year = now.getFullYear();
   const [m, d] = dateStr.split('-').map(Number);
-  const target = new Date(year, m-1, d);
+  const target = new Date(now.getFullYear(), m-1, d);
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const diff = Math.round((target - today) / 86400000);
-  const weekdays = ['日','一','二','三','四','五','六'];
-  const wd = weekdays[target.getDay()];
-  const prefix = diff === 0 ? '今天' : diff === 1 ? '明天' : diff === 2 ? '後天' : '';
-  return `${prefix ? prefix + '・' : ''}${m}/${d}（${wd}）`;
+  const wd = ['日','一','二','三','四','五','六'][target.getDay()];
+  const prefix = diff === 0 ? '今天' : diff === 1 ? '明天' : '';
+  return `${prefix}・${m}/${d}（${wd}）`;
 }
 
-function renderTable(allData) {
+function makeTable(dateKey, hours, locNames, allData, currentDateKey, currentHour) {
+  const rows = hours.map(h => {
+    const isNow = dateKey === currentDateKey && h === currentHour;
+    const cells = locNames.map(name => {
+      const pct = allData[name]?.[dateKey]?.[h] ?? null;
+      const { bg, text } = getRainColor(pct);
+      const label = pct !== null ? `${pct}%` : '—';
+      return `<td><span class="rain-cell" style="background:${bg};color:${text}">${label}</span></td>`;
+    }).join('');
+    return `<tr class="${isNow ? 'now-row' : ''}">
+      <td class="time-cell">${h}${isNow ? ' ◀' : ''}</td>${cells}
+    </tr>`;
+  }).join('');
+
+  const headers = locNames.map(n => `<th class="loc">${n}</th>`).join('');
+  return `<div class="table-wrap"><table>
+    <thead><tr><th class="time-col">時間</th>${headers}</tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+function renderAll(allData) {
   const now = new Date();
   const currentDateKey = `${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
   const currentHour = `${pad(now.getHours())}:00`;
 
-  // 收集所有日期
-  const allDates = new Set();
-  for (const locData of Object.values(allData)) {
-    for (const dateKey of Object.keys(locData)) {
-      allDates.add(dateKey);
-    }
+  // 今明兩天的 dateKey
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate()+1);
+  const todayKey = `${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
+  const tomorrowKey = `${pad(tomorrow.getMonth()+1)}-${pad(tomorrow.getDate())}`;
+  const days = [todayKey, tomorrowKey];
+
+  // 大潭24小時
+  let datanHtml = '';
+  for (const dk of days) {
+    datanHtml += `<div class="day-section">
+      <div class="day-label">📅 ${getDayLabel(dk)}</div>
+      ${makeTable(dk, DATAN_HOURS, ['大潭'], allData, currentDateKey, currentHour)}
+    </div>`;
   }
-  const sortedDates = Array.from(allDates).sort();
+  document.getElementById('datanSection').innerHTML = datanHtml;
 
-  let html = '';
-  for (const dateKey of sortedDates) {
-    const label = getDayLabel(dateKey);
-    const rows = SHOW_HOURS.map(h => {
-      const isNow = dateKey === currentDateKey && h === currentHour;
-      const cells = LOCATIONS.map(loc => {
-        const pct = allData[loc.name]?.[dateKey]?.[h] ?? null;
-        const { bg, text } = getRainColor(pct);
-        const label = pct !== null ? `${pct}%` : '—';
-        return `<td><span class="rain-cell" style="background:${bg};color:${text}">${label}</span></td>`;
-      }).join('');
-      return `<tr class="${isNow ? 'now-row' : ''}">
-        <td class="time-cell">${h}${isNow ? ' ◀' : ''}</td>
-        ${cells}
-      </tr>`;
-    }).join('');
-
-    html += `
-      <div class="day-section">
-        <div class="day-label">📅 ${label}</div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th class="time-col">時間</th>
-                ${LOCATIONS.map(l => `<th class="loc">${l.name}</th>`).join('')}
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-      </div>`;
+  // 六地對照
+  const locNames = LOCATIONS.map(l => l.name);
+  let mainHtml = '';
+  for (const dk of days) {
+    mainHtml += `<div class="day-section">
+      <div class="day-label">📅 ${getDayLabel(dk)}</div>
+      ${makeTable(dk, COMPARE_HOURS, locNames, allData, currentDateKey, currentHour)}
+    </div>`;
   }
-
-  document.getElementById('mainContent').innerHTML = html;
+  document.getElementById('mainContent').innerHTML = mainHtml;
 }
 
 async function fetchAll() {
@@ -234,11 +246,10 @@ async function fetchAll() {
       allData[loc.name] = parseLocationData(countyData, loc.town);
     }
 
-    renderTable(allData);
-    setStatus('✓ 資料已更新（中央氣象署）', 'ok');
+    renderAll(allData);
+    setStatus('✓ 資料已更新', 'ok');
   } catch(e) {
     setStatus('⚠ 抓取失敗，請重試', 'error');
-    console.error(e);
   }
 
   setLoading(false);
