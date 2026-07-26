@@ -61,6 +61,22 @@
   .ai-tip[hidden]{display:none}
   .ai-tip div{margin-top:6px;line-height:1.8;color:var(--text);font-family:'JetBrains Mono',monospace}
 
+  /* CCTV 即時校正區 */
+  .cctv-section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
+  .cctv-section-title{font-size:.82rem;font-weight:700;color:var(--accent2);margin-bottom:6px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em}
+  .cctv-note{font-size:.72rem;color:var(--muted);margin-bottom:10px;line-height:1.5}
+  .cctv-row{display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap}
+  .cctv-loc{font-size:.8rem;font-weight:700;color:var(--text);min-width:28px;font-family:'JetBrains Mono',monospace}
+  .cctv-btn{padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--muted);font-size:.72rem;cursor:pointer;transition:all .15s;font-family:'Noto Sans TC',sans-serif;white-space:nowrap}
+  .cctv-btn:hover{border-color:var(--accent2);color:var(--accent2)}
+  .cctv-btn.active.dry{background:#d1fae5;border-color:#059669;color:#065f46}
+  .cctv-btn.active.unknown{background:var(--surface2);border-color:var(--muted);color:var(--muted)}
+  .cctv-btn.active.wet{background:#fef3c7;border-color:#d97706;color:#92400e}
+  .cctv-btn.active.raining{background:#fee2e2;border-color:#e11d48;color:#9f1239}
+  .cctv-links{font-size:.72rem;color:var(--muted);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+  .cctv-links a{color:var(--accent);text-decoration:none;margin-right:8px}
+  .cctv-weight-note{font-size:.7rem;color:var(--muted);margin-top:4px;font-style:italic}
+
   .legend{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:20px;font-size:.72rem;color:var(--muted)}
   .legend-item{display:flex;align-items:center;gap:5px}
   .legend-dot{width:12px;height:12px;border-radius:3px;border:1px solid rgba(0,0,0,.08)}
@@ -94,6 +110,19 @@
     <summary>查看各方向即時降雨率</summary>
     <div id="ai-tip"></div>
   </details>
+</div>
+
+<!-- 📷 CCTV 即時降雨校正（手動設定，修正方向評分；不取代 CWA 預報） -->
+<div class="cctv-section">
+  <div class="cctv-section-title">📷 即時路況校正</div>
+  <div class="cctv-note">請對照 CCTV 設定各方向現況，自動修正出門建議分數（CCTV 佔 20%，CWA 預報佔 80%）</div>
+  <div id="cctvGrid"></div>
+  <div class="cctv-links">
+    快速查看監視器：
+    <a href="https://1968.freeway.gov.tw/" target="_blank">🛣 國道監視器</a>
+    <a href="https://www.mvdis.gov.tw/m3-emv-1968/cctv/index" target="_blank">🏞 省道監視器</a>
+  </div>
+  <div class="cctv-weight-note">* CCTV 為單點量測，僅供參考；夜間或鏡頭不清晰時建議設「不確定」</div>
 </div>
 
 <!-- 六地對照（24小時） -->
@@ -153,16 +182,68 @@ const HOURLY_TOWNS = {
 // 生活圈權重：越常去、越在意的方向權重越高（可依實際生活圈調整）
 const DIRECTION_WEIGHTS = { 新港: 40, 溪口: 25, 斗南: 20, 民雄: 15, 朴子: 15, 大林: 10, 北港: 5 };
 
+// CCTV 即時校正：手動設定現場狀況，換算為有效降雨率的微調（±10/20%）
+// 佔最終分數 20%，保持 CWA 預報為主體
+const CCTV_POP_ADJ = { dry: -10, unknown: 0, wet: +10, raining: +20 };
+const CCTV_BTN_DEF = [
+  { state: 'dry',     label: '☀ 乾燥',  cls: 'dry' },
+  { state: 'unknown', label: '? 不確定', cls: 'unknown' },
+  { state: 'wet',     label: '💧 路濕',  cls: 'wet' },
+  { state: 'raining', label: '🌧 降雨',  cls: 'raining' },
+];
+
+// 存放各方向的 CCTV 狀態；sessionStorage 持久化（重新整理清空）
+let cctvStates = {};
+try { const s = sessionStorage.getItem('cctvStates'); if (s) cctvStates = JSON.parse(s); } catch(_) {}
+
+function saveCctvStates() {
+  try { sessionStorage.setItem('cctvStates', JSON.stringify(cctvStates)); } catch(_) {}
+}
+
+function setCctvState(label, state) {
+  cctvStates[label] = state;
+  saveCctvStates();
+  renderCctvGrid();
+  updateAiReport();
+}
+
+function renderCctvGrid() {
+  const grid = document.getElementById('cctvGrid');
+  if (!grid) return;
+  grid.innerHTML = Object.keys(DIRECTION_WEIGHTS).map(label => {
+    const cur = cctvStates[label] || 'unknown';
+    const btns = CCTV_BTN_DEF.map(({ state, label: btnLabel, cls }) =>
+      `<button class="cctv-btn ${cls} ${cur === state ? 'active' : ''}"
+        onclick="setCctvState('${label}','${state}')">${btnLabel}</button>`
+    ).join('');
+    return `<div class="cctv-row"><span class="cctv-loc">${label}</span>${btns}</div>`;
+  }).join('');
+}
+
 function parseHourlyPop(locations, townName) {
   const loc = locations.find(l => l.LocationName === townName);
-  if (!loc) return [];
-  const we = loc.WeatherElement.find(e => e.ElementName === '1小時降雨機率');
-  if (!we) return [];
-  return we.Time.map(t => ({
-    start: new Date(t.StartTime),
-    end: new Date(t.EndTime),
-    value: parseInt(t.ElementValue[0].ProbabilityOfPrecipitation),
-  })).filter(t => !isNaN(t.value));
+  if (!loc) {
+    console.warn('[hourly] 找不到鄉鎮:', townName, '可用:', locations.map(l => l.LocationName));
+    return [];
+  }
+  // CWA hourly datasets use '1小時降雨機率'; fallback for alt names
+  const we = loc.WeatherElement.find(e =>
+    e.ElementName === '1小時降雨機率' || e.ElementName === 'PoP1h' || e.ElementName === 'ProbabilityOfPrecipitation'
+  );
+  if (!we) {
+    console.warn('[hourly] 找不到降雨機率元素, 鄉鎮:', townName, '可用:', loc.WeatherElement.map(e => e.ElementName));
+    return [];
+  }
+  return we.Time.map(t => {
+    const ev = t.ElementValue[0];
+    // Key name varies: ProbabilityOfPrecipitation (3h dataset) vs PoP (hourly dataset)
+    const rawVal = ev.ProbabilityOfPrecipitation ?? ev.PoP ?? ev.Pop ?? ev[Object.keys(ev)[0]];
+    return {
+      start: new Date(t.StartTime),
+      end: new Date(t.EndTime),
+      value: parseInt(rawVal),
+    };
+  }).filter(t => !isNaN(t.value));
 }
 
 function getCurrentSlotValue(slots, now) {
@@ -175,13 +256,19 @@ function getNearFutureSlots(slots, now, hoursAhead) {
   return slots.filter(s => s.start >= now).slice(0, hoursAhead);
 }
 
-// 規則式評分：分數 = (100 - 現在降雨率) × 生活圈權重，越高分越推薦
+// 規則式評分：分數 = (100 - 有效降雨率) × 生活圈權重
+// 有效降雨率 = CWA 降雨率 × 80% + CCTV 校正後降雨率 × 20%
 function computeDirectionScores(townSlots, now) {
   return Object.entries(DIRECTION_WEIGHTS).map(([label, weight]) => {
     const slots = townSlots[label] || [];
     const currentPop = getCurrentSlotValue(slots, now) ?? 0;
     const nearFuture = getNearFutureSlots(slots, now, 3);
-    return { label, weight, currentPop, nearFuture, score: (100 - currentPop) * weight };
+    const cctvAdj = CCTV_POP_ADJ[cctvStates[label] || 'unknown'];
+    const cctvPop = Math.max(0, Math.min(100, currentPop + cctvAdj));
+    // 80% CWA + 20% CCTV 校正；unknown 時 cctvAdj=0，等同純 CWA
+    const effectivePop = currentPop * 0.8 + cctvPop * 0.2;
+    const score = (100 - effectivePop) * weight;
+    return { label, weight, currentPop, cctvAdj, effectivePop: Math.round(effectivePop), nearFuture, score };
   }).sort((a, b) => b.score - a.score);
 }
 
@@ -209,11 +296,21 @@ function directionAdvisor(townSlots, now) {
     warning = `⚠️ 預計 <strong>${pad(upcoming.spike.start.getHours())}:00</strong>，${upcoming.label}降雨率將達 ${upcoming.spike.value}%，建議${deadlineText}出門`;
   }
 
+  function cctvTag(r) {
+    const s = cctvStates[r.label];
+    if (!s || s === 'unknown') return '';
+    const icons = { dry: '☀', wet: '💧', raining: '🌧' };
+    return ` ${icons[s] || ''}`;
+  }
+
   return {
     scores,
     recommendLabel: recommend.map(r => r.label).join('／') + '方向',
-    reasonText: '原因：' + recommend.map(r => `${r.label} ${r.currentPop}%`).join('　'),
-    avoidText: avoid.currentPop >= 50 ? `🚫 避免：${avoid.label}方向（${avoid.currentPop}%）` : '',
+    reasonText: '原因：' + recommend.map(r => {
+      const adj = r.cctvAdj !== 0 ? `→${r.effectivePop}%校正` : '';
+      return `${r.label} ${r.currentPop}%${adj}${cctvTag(r)}`;
+    }).join('　'),
+    avoidText: avoid.effectivePop >= 50 ? `🚫 避免：${avoid.label}方向（${avoid.currentPop}%${avoid.cctvAdj !== 0 ? `→${avoid.effectivePop}%` : ''}）` : '',
     warning,
   };
 }
@@ -246,8 +343,14 @@ async function updateAiReport() {
     avoidEl.textContent = advice.avoidText;
     timeEl.innerHTML = advice.warning || '📊 未來 2–3 小時對流平穩，暫無突發大雨';
 
+    const cctvIcons = { dry: ' ☀', unknown: '', wet: ' 💧', raining: ' 🌧' };
     tipEl.innerHTML = advice.scores
-      .map(s => `${s.label}　${s.currentPop}%`)
+      .map(s => {
+        const cState = cctvStates[s.label] || 'unknown';
+        const cctvStr = cState !== 'unknown' ? cctvIcons[cState] : '';
+        const adjStr = s.cctvAdj !== 0 ? `→<strong>${s.effectivePop}%</strong>` : '';
+        return `${s.label}　${s.currentPop}%${adjStr}${cctvStr}`;
+      })
       .join('<br>');
     tipWrap.hidden = false;
   } catch (e) {
@@ -289,8 +392,15 @@ function updateDateBadge() {
 
 async function fetchCounty(code) {
   const res = await fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/${code}?Authorization=${KEY}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${code}`);
   const data = await res.json();
-  return data.records.Locations[0].Location;
+  const rec = data.records;
+  // CWA API: some datasets use Locations[0].Location, others use locations[0].location
+  if (rec.Locations?.[0]?.Location) return rec.Locations[0].Location;
+  if (rec.locations?.[0]?.location) return rec.locations[0].location;
+  if (Array.isArray(rec.Location)) return rec.Location;
+  console.error('[fetchCounty] 未知回傳結構:', code, Object.keys(rec));
+  throw new Error('Unexpected response structure for ' + code);
 }
 
 function parseLocationData(locations, townName) {
@@ -395,6 +505,7 @@ async function fetchAll() {
   setLoading(false);
 }
 
+renderCctvGrid();
 fetchAll();
 </script>
 </body>
