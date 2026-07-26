@@ -7,8 +7,8 @@
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap');
   :root {
-    --bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2e3350;
-    --accent:#4f8ef7;--accent2:#7c5cfc;--text:#e2e8f0;--muted:#64748b;--green:#10b981;--red:#f43f5e;
+    --bg:#f4f6fb;--surface:#ffffff;--surface2:#eef1f8;--border:#dde3f0;
+    --accent:#2f6fed;--accent2:#7c5cfc;--text:#1c2333;--muted:#66708a;--green:#059669;--red:#e11d48;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC',sans-serif;min-height:100vh;padding:20px 16px 40px}
@@ -43,21 +43,30 @@
   tbody tr{border-bottom:1px solid var(--border);transition:background .15s}
   tbody tr:last-child{border-bottom:none}
   tbody tr:hover{background:var(--surface2)}
-  .now-row{background:rgba(79,142,247,.08)!important;border-left:3px solid var(--accent)}
+  .now-row{background:rgba(47,111,237,.07)!important;border-left:3px solid var(--accent)}
   .now-row td.time-cell{color:var(--accent);font-weight:700}
   td{padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:.8rem}
   td.time-cell{color:var(--muted);font-weight:600;white-space:nowrap}
   .rain-cell{border-radius:6px;font-weight:600;padding:7px 4px;min-width:48px;display:block;margin:0 auto}
 
-  .ai-report{background:linear-gradient(135deg,rgba(79,142,247,.12),rgba(124,92,252,.12));border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:20px}
-  .ai-report-title{font-size:.85rem;font-weight:700;color:var(--accent);margin-bottom:10px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em}
-  .ai-report-block{font-size:.85rem;line-height:1.7;margin-bottom:8px}
-  .ai-report-block:last-child{margin-bottom:0}
-  .ai-report-block a{color:var(--accent)}
+  .ai-report{background:linear-gradient(135deg,rgba(47,111,237,.07),rgba(124,92,252,.07));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
+  .ai-report-title{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em}
+  .ai-now-strip{font-size:.72rem;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:8px}
+  .ai-verdict{font-size:1rem;font-weight:700;margin-bottom:4px}
+  .ai-verdict.ok{color:var(--green)}
+  .ai-verdict.warn{color:#b45309}
+  .ai-verdict.danger{color:var(--red)}
+  .ai-reason{font-size:.82rem;color:var(--text);line-height:1.6;margin-bottom:6px}
+  .ai-tip{font-size:.78rem;margin-bottom:8px}
+  .ai-tip summary{cursor:pointer;color:var(--accent);font-weight:600}
+  .ai-tip[hidden]{display:none}
+  .ai-tip div{margin-top:6px;line-height:1.7;color:var(--text)}
+  .ai-tip a{color:var(--accent)}
+  .ai-time{font-size:.8rem;line-height:1.6;color:var(--text)}
 
   .legend{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:20px;font-size:.72rem;color:var(--muted)}
   .legend-item{display:flex;align-items:center;gap:5px}
-  .legend-dot{width:12px;height:12px;border-radius:3px}
+  .legend-dot{width:12px;height:12px;border-radius:3px;border:1px solid rgba(0,0,0,.08)}
   .source-note{text-align:center;margin-top:24px;font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:1.8}
   .source-note a{color:var(--accent);text-decoration:none}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
@@ -79,38 +88,38 @@
 
 <!-- AI 出門建議快報：以朴子/新港/民雄/斗南當前1小時降雨率(PoP1h)判斷 -->
 <div class="ai-report" id="aiReport">
-  <div class="ai-report-title">🚗 出門建議快報</div>
-  <div class="ai-report-block" id="ai-report-direction">載入中…</div>
-  <div class="ai-report-block" id="ai-report-time">載入中…</div>
+  <div class="ai-report-title">🚗 出門建議</div>
+  <div class="ai-now-strip" id="ai-now-strip">載入中…</div>
+  <div class="ai-verdict" id="ai-verdict">載入中…</div>
+  <div class="ai-reason" id="ai-reason"></div>
+  <details class="ai-tip" id="ai-tip-wrap" hidden>
+    <summary>查看建議景點與監視器</summary>
+    <div id="ai-tip"></div>
+  </details>
+  <div class="ai-time" id="ai-report-time">載入中…</div>
 </div>
 
-<!-- 大潭獨立區 -->
-<div class="section-title">📍 大潭（新港鄉）24小時</div>
-<div id="datanSection"></div>
-
-<hr class="section-divider">
-
-<!-- 六地對照 -->
+<!-- 六地對照（24小時） -->
 <div class="section-title">🗺 六地對照｜今天 + 明天</div>
 <div id="mainContent"></div>
 
 <div class="legend">
-  <div class="legend-item"><div class="legend-dot" style="background:#12243a"></div>&lt;40%</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#1e3a5f"></div>40–69%</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#0c4a6e"></div>70–89%</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#7f1d35"></div>90%+</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#eef4fb"></div>&lt;40%</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#dbeafe"></div>40–69%</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#bfe3fb"></div>70–89%</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#fecdd3"></div>90%+</div>
 </div>
 
 <div class="source-note">
   資料來源：<a href="https://opendata.cwa.gov.tw/" target="_blank">中央氣象署</a> · 鄉鎮3小時降雨機率預報<br>
-  大潭（新港鄉）· 民雄鄉 · 溪口鄉 · 北港鎮 · 朴子市 · 斗南鎮
+  新港鄉 · 民雄鄉 · 溪口鄉 · 北港鎮 · 朴子市 · 斗南鎮
 </div>
 
 <script>
 const KEY = 'CWA-1D3F650A-CBDF-4BE9-9DE8-8869409AC7FD';
 
 const LOCATIONS = [
-  { name: '大潭', county: 'F-D0047-029', town: '新港鄉' },
+  { name: '新港', county: 'F-D0047-029', town: '新港鄉' },
   { name: '民雄', county: 'F-D0047-029', town: '民雄鄉' },
   { name: '溪口', county: 'F-D0047-029', town: '溪口鄉' },
   { name: '北港', county: 'F-D0047-025', town: '北港鎮' },
@@ -118,11 +127,18 @@ const LOCATIONS = [
   { name: '斗南', county: 'F-D0047-025', town: '斗南鎮' },
 ];
 
-// 六地對照：06:00～23:00（3小時）
-const COMPARE_HOURS = ['06:00','09:00','12:00','15:00','18:00','21:00'];
+// 舊命名相容：任何殘留的「大潭」字樣一律正規化顯示為「新港」
+const LOCATION_ALIAS = {
+  '大潭': '新港',
+  '大潭（新港鄉）': '新港',
+  '大潭(新港鄉)': '新港',
+};
+function getDisplayLocation(name) {
+  return LOCATION_ALIAS[name] || name;
+}
 
-// 大潭24小時：00:00～21:00（3小時）
-const DATAN_HOURS = ['00:00','03:00','06:00','09:00','12:00','15:00','18:00','21:00'];
+// 六地對照 24 小時：00:00～21:00（3小時一格）
+const COMPARE_HOURS = ['00:00','03:00','06:00','09:00','12:00','15:00','18:00','21:00'];
 
 // 逐小時降雨率 PoP1h 資料集（用於「出門建議快報」，涵蓋朴子/新港/民雄/斗南）
 const HOURLY_COUNTY_CODES = { chiayi: 'F-D0047-062', yunlin: 'F-D0047-026' };
@@ -161,33 +177,63 @@ function findHeavyRainSlot(townSlots, now) {
   return earliest;
 }
 
+// 回傳 { cls, verdict, reason, tip } — verdict/reason 為首屏必看的精簡結論，
+// tip（如有）收進可折疊的 <details>，避免卡片在手機上過高。
 function buildDriveAdvice(puzi_pop, xingang_pop, minxiong_pop, dounan_pop) {
   if (minxiong_pop >= 70 && puzi_pop < 50) {
-    return `🟢 <strong>能不能出門？</strong> 可以出門，但請注意方向！<br>
-      🧭 <strong>方向建議</strong>：目前山邊對流劇烈，民雄、斗南正遭遇強降雨，<strong>不適合前往民雄與斗南</strong>！建議【往西南（太保/朴子）移動】，可前往免門票的【故宮南院兒童創意中心】室內避雨放電。<br>
-      📺 <a href="https://tw.live" target="_blank">點我調閱朴子路面監視器確認乾濕</a>`;
+    return {
+      cls: 'ok',
+      verdict: '🟢 可以出門，注意方向',
+      reason: `民雄、斗南山邊對流劇烈（民雄 ${minxiong_pop}%），不適合前往；建議往西南（太保/朴子）移動`,
+      tip: `可前往免門票的【故宮南院兒童創意中心】室內避雨放電。<br>📺 <a href="https://tw.live" target="_blank">調閱朴子路面監視器確認乾濕</a>`,
+    };
   }
   if (puzi_pop >= 70 && minxiong_pop < 50) {
-    return `🟢 <strong>能不能出門？</strong> 可以出門，但請注意方向！<br>
-      🧭 <strong>方向建議</strong>：海區平原一帶目前正受對流影響，<strong>不適合前往朴子與新港</strong>！建議【往東北（大林）移動】，前往免門票的【丸聚星球觀光工廠】吃免費貢丸湯避雨。<br>
-      📺 <a href="https://tw.live" target="_blank">點我調閱民雄路面監視器確認乾濕</a>`;
+    return {
+      cls: 'ok',
+      verdict: '🟢 可以出門，注意方向',
+      reason: `朴子、新港海區平原對流影響（朴子 ${puzi_pop}%），不適合前往；建議往東北（大林）移動`,
+      tip: `前往免門票的【丸聚星球觀光工廠】吃免費貢丸湯避雨。<br>📺 <a href="https://tw.live" target="_blank">調閱民雄路面監視器確認乾濕</a>`,
+    };
   }
   if (puzi_pop >= 70 && minxiong_pop >= 70) {
-    return `❌ <strong>能不能出門？ ⚠️ 極不建議出門！</strong><br>
-      🧭 <strong>方向建議</strong>：目前雲嘉六地全面籠罩在強降雨帶下，<strong>雙向皆不安全</strong>！極不建議騎車載 1.5 歲幼童外出，雨衣內悶熱且視線極差，請暫時留在室內避雨。`;
+    return {
+      cls: 'danger',
+      verdict: '❌ 極不建議出門',
+      reason: '雲嘉六地全面籠罩在強降雨帶下，雙向皆不安全，請暫時留在室內避雨',
+      tip: null,
+    };
   }
-  return `🟢 <strong>傳統大晴天/無明顯雨勢</strong>：目前雲嘉各鄉鎮降雨機率均低（均在 40% 以下），路面狀況良好，適合正常騎車外出！`;
+  return {
+    cls: 'ok',
+    verdict: '🟢 可以正常出門',
+    reason: '雲嘉各鄉鎮降雨機率均低（40% 以下），路面狀況良好',
+    tip: null,
+  };
 }
 
 function buildTimeAdvice(heavyRainSlot) {
   if (!heavyRainSlot) {
-    return '📊 接下來數小時內對流平穩，暫無突發大暴雨預報。';
+    return '📊 接下來對流平穩，暫無突發大暴雨預報';
   }
   const formatted_time = `${pad(heavyRainSlot.start.getHours())}:00`;
-  return `⚠️ <strong>關鍵暴雨時程</strong>：預報顯示 ${heavyRainSlot.label} 一帶在 <strong>${formatted_time}</strong> 左右對流會快速爆發，請務必在該時段前進入建築物或提早結束行程！`;
+  return `⚠️ 預計 <strong>${formatted_time}</strong> 前後，${getDisplayLocation(heavyRainSlot.label)}一帶對流快速爆發，請提早結束行程`;
+}
+
+function buildNowStrip(pops) {
+  const parts = Object.entries(pops).map(([label, val]) =>
+    `${getDisplayLocation(label)} ${val !== null ? val + '%' : '—'}`);
+  return `💧 現在降雨率　${parts.join('　')}`;
 }
 
 async function updateAiReport() {
+  const verdictEl = document.getElementById('ai-verdict');
+  const reasonEl = document.getElementById('ai-reason');
+  const tipWrap = document.getElementById('ai-tip-wrap');
+  const tipEl = document.getElementById('ai-tip');
+  const nowStripEl = document.getElementById('ai-now-strip');
+  const timeEl = document.getElementById('ai-report-time');
+
   try {
     const [chiayiHourly, yunlinHourly] = await Promise.all([
       fetchCounty(HOURLY_COUNTY_CODES.chiayi),
@@ -206,26 +252,43 @@ async function updateAiReport() {
     const minxiong_pop = getCurrentSlotValue(townSlots.minxiong, now);
     const dounan_pop = getCurrentSlotValue(townSlots.dounan, now);
 
-    document.getElementById('ai-report-direction').innerHTML =
-      buildDriveAdvice(puzi_pop ?? 0, xingang_pop ?? 0, minxiong_pop ?? 0, dounan_pop ?? 0);
+    nowStripEl.textContent = buildNowStrip({
+      朴子: puzi_pop, 新港: xingang_pop, 民雄: minxiong_pop, 斗南: dounan_pop,
+    });
+
+    const advice = buildDriveAdvice(puzi_pop ?? 0, xingang_pop ?? 0, minxiong_pop ?? 0, dounan_pop ?? 0);
+    verdictEl.textContent = advice.verdict;
+    verdictEl.className = 'ai-verdict ' + advice.cls;
+    reasonEl.textContent = advice.reason;
+    if (advice.tip) {
+      tipEl.innerHTML = advice.tip;
+      tipWrap.hidden = false;
+    } else {
+      tipEl.innerHTML = '';
+      tipWrap.hidden = true;
+    }
 
     const heavyRainSlot = findHeavyRainSlot(
       Object.entries(HOURLY_TOWNS).map(([key, cfg]) => ({ label: cfg.label, slots: townSlots[key] })),
       now
     );
-    document.getElementById('ai-report-time').innerHTML = buildTimeAdvice(heavyRainSlot);
+    timeEl.innerHTML = buildTimeAdvice(heavyRainSlot);
   } catch (e) {
-    document.getElementById('ai-report-direction').innerHTML = '⚠ 無法取得即時降雨資料，暫無出門建議。';
-    document.getElementById('ai-report-time').innerHTML = '';
+    nowStripEl.textContent = '';
+    verdictEl.textContent = '⚠ 無法取得即時降雨資料';
+    verdictEl.className = 'ai-verdict warn';
+    reasonEl.textContent = '暫無出門建議，請稍後重試';
+    tipWrap.hidden = true;
+    timeEl.textContent = '';
   }
 }
 
 function getRainColor(pct) {
-  if (pct === null) return { bg: '#1a1d27', text: '#64748b' };
-  if (pct >= 90) return { bg: '#7f1d35', text: '#fda4af' };
-  if (pct >= 70) return { bg: '#0c4a6e', text: '#7dd3fc' };
-  if (pct >= 40) return { bg: '#1e3a5f', text: '#93c5fd' };
-  return { bg: '#12243a', text: '#4a6080' };
+  if (pct === null) return { bg: '#eef1f8', text: '#94a0b8' };
+  if (pct >= 90) return { bg: '#fecdd3', text: '#9f1239' };
+  if (pct >= 70) return { bg: '#bfe3fb', text: '#075985' };
+  if (pct >= 40) return { bg: '#dbeafe', text: '#1d4ed8' };
+  return { bg: '#eef4fb', text: '#7c8aa8' };
 }
 
 function pad(n) { return String(n).padStart(2,'0'); }
@@ -297,7 +360,7 @@ function makeTable(dateKey, hours, locNames, allData, currentDateKey, currentHou
     </tr>`;
   }).join('');
 
-  const headers = locNames.map(n => `<th class="loc">${n}</th>`).join('');
+  const headers = locNames.map(n => `<th class="loc">${getDisplayLocation(n)}</th>`).join('');
   return `<div class="table-wrap"><table>
     <thead><tr><th class="time-col">時間</th>${headers}</tr></thead>
     <tbody>${rows}</tbody>
@@ -316,17 +379,7 @@ function renderAll(allData) {
   const tomorrowKey = `${pad(tomorrow.getMonth()+1)}-${pad(tomorrow.getDate())}`;
   const days = [todayKey, tomorrowKey];
 
-  // 大潭24小時
-  let datanHtml = '';
-  for (const dk of days) {
-    datanHtml += `<div class="day-section">
-      <div class="day-label">📅 ${getDayLabel(dk)}</div>
-      ${makeTable(dk, DATAN_HOURS, ['大潭'], allData, currentDateKey, currentHour)}
-    </div>`;
-  }
-  document.getElementById('datanSection').innerHTML = datanHtml;
-
-  // 六地對照
+  // 六地對照（24小時）
   const locNames = LOCATIONS.map(l => l.name);
   let mainHtml = '';
   for (const dk of days) {
