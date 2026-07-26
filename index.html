@@ -49,6 +49,12 @@
   td.time-cell{color:var(--muted);font-weight:600;white-space:nowrap}
   .rain-cell{border-radius:6px;font-weight:600;padding:7px 4px;min-width:48px;display:block;margin:0 auto}
 
+  .ai-report{background:linear-gradient(135deg,rgba(79,142,247,.12),rgba(124,92,252,.12));border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:20px}
+  .ai-report-title{font-size:.85rem;font-weight:700;color:var(--accent);margin-bottom:10px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em}
+  .ai-report-block{font-size:.85rem;line-height:1.7;margin-bottom:8px}
+  .ai-report-block:last-child{margin-bottom:0}
+  .ai-report-block a{color:var(--accent)}
+
   .legend{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:20px;font-size:.72rem;color:var(--muted)}
   .legend-item{display:flex;align-items:center;gap:5px}
   .legend-dot{width:12px;height:12px;border-radius:3px}
@@ -70,6 +76,13 @@
   重新整理
 </button>
 <div class="status-msg" id="statusMsg">自動載入中…</div>
+
+<!-- AI 出門建議快報：以朴子/新港/民雄/斗南當前1小時降雨率(PoP1h)判斷 -->
+<div class="ai-report" id="aiReport">
+  <div class="ai-report-title">🚗 出門建議快報</div>
+  <div class="ai-report-block" id="ai-report-direction">載入中…</div>
+  <div class="ai-report-block" id="ai-report-time">載入中…</div>
+</div>
 
 <!-- 大潭獨立區 -->
 <div class="section-title">📍 大潭（新港鄉）24小時</div>
@@ -110,6 +123,102 @@ const COMPARE_HOURS = ['06:00','09:00','12:00','15:00','18:00','21:00'];
 
 // 大潭24小時：00:00～21:00（3小時）
 const DATAN_HOURS = ['00:00','03:00','06:00','09:00','12:00','15:00','18:00','21:00'];
+
+// 逐小時降雨率 PoP1h 資料集（用於「出門建議快報」，涵蓋朴子/新港/民雄/斗南）
+const HOURLY_COUNTY_CODES = { chiayi: 'F-D0047-062', yunlin: 'F-D0047-026' };
+const HOURLY_TOWNS = {
+  puzi:     { county: 'chiayi', town: '朴子市', label: '朴子' },
+  xingang:  { county: 'chiayi', town: '新港鄉', label: '新港' },
+  minxiong: { county: 'chiayi', town: '民雄鄉', label: '民雄' },
+  dounan:   { county: 'yunlin', town: '斗南鎮', label: '斗南' },
+};
+
+function parseHourlyPop(locations, townName) {
+  const loc = locations.find(l => l.LocationName === townName);
+  if (!loc) return [];
+  const we = loc.WeatherElement.find(e => e.ElementName === '1小時降雨機率');
+  if (!we) return [];
+  return we.Time.map(t => ({
+    start: new Date(t.StartTime),
+    end: new Date(t.EndTime),
+    value: parseInt(t.ElementValue[0].ProbabilityOfPrecipitation),
+  })).filter(t => !isNaN(t.value));
+}
+
+function getCurrentSlotValue(slots, now) {
+  const slot = slots.find(s => now >= s.start && now < s.end);
+  return slot ? slot.value : null;
+}
+
+function findHeavyRainSlot(townSlots, now) {
+  let earliest = null;
+  for (const { label, slots } of townSlots) {
+    const hit = slots.find(s => s.start >= now && s.value >= 80);
+    if (hit && (!earliest || hit.start < earliest.start)) {
+      earliest = { label, start: hit.start };
+    }
+  }
+  return earliest;
+}
+
+function buildDriveAdvice(puzi_pop, xingang_pop, minxiong_pop, dounan_pop) {
+  if (minxiong_pop >= 70 && puzi_pop < 50) {
+    return `🟢 <strong>能不能出門？</strong> 可以出門，但請注意方向！<br>
+      🧭 <strong>方向建議</strong>：目前山邊對流劇烈，民雄、斗南正遭遇強降雨，<strong>不適合前往民雄與斗南</strong>！建議【往西南（太保/朴子）移動】，可前往免門票的【故宮南院兒童創意中心】室內避雨放電。<br>
+      📺 <a href="https://tw.live" target="_blank">點我調閱朴子路面監視器確認乾濕</a>`;
+  }
+  if (puzi_pop >= 70 && minxiong_pop < 50) {
+    return `🟢 <strong>能不能出門？</strong> 可以出門，但請注意方向！<br>
+      🧭 <strong>方向建議</strong>：海區平原一帶目前正受對流影響，<strong>不適合前往朴子與新港</strong>！建議【往東北（大林）移動】，前往免門票的【丸聚星球觀光工廠】吃免費貢丸湯避雨。<br>
+      📺 <a href="https://tw.live" target="_blank">點我調閱民雄路面監視器確認乾濕</a>`;
+  }
+  if (puzi_pop >= 70 && minxiong_pop >= 70) {
+    return `❌ <strong>能不能出門？ ⚠️ 極不建議出門！</strong><br>
+      🧭 <strong>方向建議</strong>：目前雲嘉六地全面籠罩在強降雨帶下，<strong>雙向皆不安全</strong>！極不建議騎車載 1.5 歲幼童外出，雨衣內悶熱且視線極差，請暫時留在室內避雨。`;
+  }
+  return `🟢 <strong>傳統大晴天/無明顯雨勢</strong>：目前雲嘉各鄉鎮降雨機率均低（均在 40% 以下），路面狀況良好，適合正常騎車外出！`;
+}
+
+function buildTimeAdvice(heavyRainSlot) {
+  if (!heavyRainSlot) {
+    return '📊 接下來數小時內對流平穩，暫無突發大暴雨預報。';
+  }
+  const formatted_time = `${pad(heavyRainSlot.start.getHours())}:00`;
+  return `⚠️ <strong>關鍵暴雨時程</strong>：預報顯示 ${heavyRainSlot.label} 一帶在 <strong>${formatted_time}</strong> 左右對流會快速爆發，請務必在該時段前進入建築物或提早結束行程！`;
+}
+
+async function updateAiReport() {
+  try {
+    const [chiayiHourly, yunlinHourly] = await Promise.all([
+      fetchCounty(HOURLY_COUNTY_CODES.chiayi),
+      fetchCounty(HOURLY_COUNTY_CODES.yunlin),
+    ]);
+    const hourlyData = { chiayi: chiayiHourly, yunlin: yunlinHourly };
+
+    const now = new Date();
+    const townSlots = {};
+    for (const [key, cfg] of Object.entries(HOURLY_TOWNS)) {
+      townSlots[key] = parseHourlyPop(hourlyData[cfg.county], cfg.town);
+    }
+
+    const puzi_pop = getCurrentSlotValue(townSlots.puzi, now);
+    const xingang_pop = getCurrentSlotValue(townSlots.xingang, now);
+    const minxiong_pop = getCurrentSlotValue(townSlots.minxiong, now);
+    const dounan_pop = getCurrentSlotValue(townSlots.dounan, now);
+
+    document.getElementById('ai-report-direction').innerHTML =
+      buildDriveAdvice(puzi_pop ?? 0, xingang_pop ?? 0, minxiong_pop ?? 0, dounan_pop ?? 0);
+
+    const heavyRainSlot = findHeavyRainSlot(
+      Object.entries(HOURLY_TOWNS).map(([key, cfg]) => ({ label: cfg.label, slots: townSlots[key] })),
+      now
+    );
+    document.getElementById('ai-report-time').innerHTML = buildTimeAdvice(heavyRainSlot);
+  } catch (e) {
+    document.getElementById('ai-report-direction').innerHTML = '⚠ 無法取得即時降雨資料，暫無出門建議。';
+    document.getElementById('ai-report-time').innerHTML = '';
+  }
+}
 
 function getRainColor(pct) {
   if (pct === null) return { bg: '#1a1d27', text: '#64748b' };
@@ -251,6 +360,8 @@ async function fetchAll() {
   } catch(e) {
     setStatus('⚠ 抓取失敗，請重試', 'error');
   }
+
+  await updateAiReport();
 
   setLoading(false);
 }
