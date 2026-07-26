@@ -324,22 +324,27 @@ async function updateAiReport() {
   const tipEl = document.getElementById('ai-tip');
 
   try {
+    // 使用容錯版 fetch：個別鄉鎮失敗不影響整體
     const [chiayiHourly, yunlinHourly] = await Promise.all([
-      fetchCounty(HOURLY_COUNTY_CODES.chiayi),
-      fetchCounty(HOURLY_COUNTY_CODES.yunlin),
+      fetchCountyHourly(HOURLY_COUNTY_CODES.chiayi),
+      fetchCountyHourly(HOURLY_COUNTY_CODES.yunlin),
     ]);
     const hourlyData = { chiayi: chiayiHourly, yunlin: yunlinHourly };
 
     const now = new Date();
     const townSlots = {};
+    let totalSlots = 0;
     for (const [label, cfg] of Object.entries(HOURLY_TOWNS)) {
       townSlots[label] = parseHourlyPop(hourlyData[cfg.county], cfg.town);
+      totalSlots += townSlots[label].length;
+      console.log(`[slots] ${label}: ${townSlots[label].length} slots`);
     }
 
     const advice = directionAdvisor(townSlots, now);
+    const noData = totalSlots === 0;
 
     recommendEl.textContent = `🟢 推薦：${advice.recommendLabel}`;
-    reasonEl.textContent = advice.reasonText;
+    reasonEl.textContent = advice.reasonText + (noData ? '（PoP1h 未取得，以0%計算）' : '');
     avoidEl.textContent = advice.avoidText;
     timeEl.innerHTML = advice.warning || '📊 未來 2–3 小時對流平穩，暫無突發大雨';
 
@@ -349,15 +354,17 @@ async function updateAiReport() {
         const cState = cctvStates[s.label] || 'unknown';
         const cctvStr = cState !== 'unknown' ? cctvIcons[cState] : '';
         const adjStr = s.cctvAdj !== 0 ? `→<strong>${s.effectivePop}%</strong>` : '';
-        return `${s.label}　${s.currentPop}%${adjStr}${cctvStr}`;
+        const noSlot = (townSlots[s.label] || []).length === 0 ? ' <span style="color:var(--muted)">無資料</span>' : '';
+        return `${s.label}　${s.currentPop}%${adjStr}${cctvStr}${noSlot}`;
       })
       .join('<br>');
     tipWrap.hidden = false;
   } catch (e) {
-    recommendEl.textContent = '⚠ 無法取得即時降雨資料';
-    reasonEl.textContent = '暫無出門建議，請稍後重試';
+    console.error('[updateAiReport] 未預期錯誤:', e);
+    recommendEl.textContent = '⚠ 資料處理失敗';
+    reasonEl.textContent = e.message;
     avoidEl.textContent = '';
-    timeEl.textContent = '';
+    timeEl.textContent = '請開啟 DevTools Console 確認詳細錯誤';
     tipWrap.hidden = true;
   }
 }
@@ -399,8 +406,22 @@ async function fetchCounty(code) {
   if (rec.Locations?.[0]?.Location) return rec.Locations[0].Location;
   if (rec.locations?.[0]?.location) return rec.locations[0].location;
   if (Array.isArray(rec.Location)) return rec.Location;
-  console.error('[fetchCounty] 未知回傳結構:', code, Object.keys(rec));
+  // Log full structure so user can diagnose via DevTools
+  console.error('[fetchCounty] 未知回傳結構:', code, JSON.stringify(rec).slice(0, 400));
   throw new Error('Unexpected response structure for ' + code);
+}
+
+// hourly 資料容錯版：失敗時回傳空陣列，讓 advisor 仍能以 0% 預設值執行
+async function fetchCountyHourly(code) {
+  try {
+    const locs = await fetchCounty(code);
+    console.log(`[hourly ok] ${code} → ${locs.length} 鄉鎮, elements:`,
+      locs[0]?.WeatherElement?.map(e => e.ElementName));
+    return locs;
+  } catch(e) {
+    console.error(`[hourly fail] ${code}:`, e.message);
+    return [];
+  }
 }
 
 function parseLocationData(locations, townName) {
