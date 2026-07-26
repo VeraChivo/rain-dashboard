@@ -51,18 +51,15 @@
 
   .ai-report{background:linear-gradient(135deg,rgba(47,111,237,.07),rgba(124,92,252,.07));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
   .ai-report-title{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em}
-  .ai-now-strip{font-size:.72rem;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:8px}
-  .ai-verdict{font-size:1rem;font-weight:700;margin-bottom:4px}
-  .ai-verdict.ok{color:var(--green)}
-  .ai-verdict.warn{color:#b45309}
-  .ai-verdict.danger{color:var(--red)}
+  .ai-recommend{font-size:1rem;font-weight:700;color:var(--green);margin-bottom:2px}
   .ai-reason{font-size:.82rem;color:var(--text);line-height:1.6;margin-bottom:6px}
-  .ai-tip{font-size:.78rem;margin-bottom:8px}
+  .ai-avoid{font-size:.85rem;font-weight:700;color:var(--red);margin-bottom:6px}
+  .ai-avoid:empty{display:none;margin:0}
+  .ai-time{font-size:.8rem;line-height:1.6;color:var(--text);margin-bottom:6px}
+  .ai-tip{font-size:.78rem}
   .ai-tip summary{cursor:pointer;color:var(--accent);font-weight:600}
   .ai-tip[hidden]{display:none}
-  .ai-tip div{margin-top:6px;line-height:1.7;color:var(--text)}
-  .ai-tip a{color:var(--accent)}
-  .ai-time{font-size:.8rem;line-height:1.6;color:var(--text)}
+  .ai-tip div{margin-top:6px;line-height:1.8;color:var(--text);font-family:'JetBrains Mono',monospace}
 
   .legend{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:20px;font-size:.72rem;color:var(--muted)}
   .legend-item{display:flex;align-items:center;gap:5px}
@@ -86,17 +83,17 @@
 </button>
 <div class="status-msg" id="statusMsg">自動載入中…</div>
 
-<!-- AI 出門建議快報：以朴子/新港/民雄/斗南當前1小時降雨率(PoP1h)判斷 -->
+<!-- 🚗 出門建議決策卡（directionAdvisor）：以生活圈權重 × 現在降雨率排序推薦/避免方向 -->
 <div class="ai-report" id="aiReport">
-  <div class="ai-report-title">🚗 出門建議</div>
-  <div class="ai-now-strip" id="ai-now-strip">載入中…</div>
-  <div class="ai-verdict" id="ai-verdict">載入中…</div>
+  <div class="ai-report-title">🚗 今日出門建議</div>
+  <div class="ai-recommend" id="ai-recommend">載入中…</div>
   <div class="ai-reason" id="ai-reason"></div>
+  <div class="ai-avoid" id="ai-avoid"></div>
+  <div class="ai-time" id="ai-report-time"></div>
   <details class="ai-tip" id="ai-tip-wrap" hidden>
-    <summary>查看建議景點與監視器</summary>
+    <summary>查看各方向即時降雨率</summary>
     <div id="ai-tip"></div>
   </details>
-  <div class="ai-time" id="ai-report-time">載入中…</div>
 </div>
 
 <!-- 六地對照（24小時） -->
@@ -140,14 +137,21 @@ function getDisplayLocation(name) {
 // 六地對照 24 小時：00:00～21:00（3小時一格）
 const COMPARE_HOURS = ['00:00','03:00','06:00','09:00','12:00','15:00','18:00','21:00'];
 
-// 逐小時降雨率 PoP1h 資料集（用於「出門建議快報」，涵蓋朴子/新港/民雄/斗南）
+// 逐小時降雨率 PoP1h 資料集（用於「出門建議」決策卡）
+// 062/026 已涵蓋嘉義縣、雲林縣全部鄉鎮，這裡直接多解析溪口/大林/北港，不需要多打 API
 const HOURLY_COUNTY_CODES = { chiayi: 'F-D0047-062', yunlin: 'F-D0047-026' };
 const HOURLY_TOWNS = {
-  puzi:     { county: 'chiayi', town: '朴子市', label: '朴子' },
-  xingang:  { county: 'chiayi', town: '新港鄉', label: '新港' },
-  minxiong: { county: 'chiayi', town: '民雄鄉', label: '民雄' },
-  dounan:   { county: 'yunlin', town: '斗南鎮', label: '斗南' },
+  新港: { county: 'chiayi', town: '新港鄉' },
+  溪口: { county: 'chiayi', town: '溪口鄉' },
+  民雄: { county: 'chiayi', town: '民雄鄉' },
+  朴子: { county: 'chiayi', town: '朴子市' },
+  大林: { county: 'chiayi', town: '大林鎮' },
+  斗南: { county: 'yunlin', town: '斗南鎮' },
+  北港: { county: 'yunlin', town: '北港鎮' },
 };
+
+// 生活圈權重：越常去、越在意的方向權重越高（可依實際生活圈調整）
+const DIRECTION_WEIGHTS = { 新港: 40, 溪口: 25, 斗南: 20, 民雄: 15, 朴子: 15, 大林: 10, 北港: 5 };
 
 function parseHourlyPop(locations, townName) {
   const loc = locations.find(l => l.LocationName === townName);
@@ -166,73 +170,61 @@ function getCurrentSlotValue(slots, now) {
   return slot ? slot.value : null;
 }
 
-function findHeavyRainSlot(townSlots, now) {
-  let earliest = null;
-  for (const { label, slots } of townSlots) {
-    const hit = slots.find(s => s.start >= now && s.value >= 80);
-    if (hit && (!earliest || hit.start < earliest.start)) {
-      earliest = { label, start: hit.start };
-    }
-  }
-  return earliest;
+// 未來 N 小時（不含目前這一格）
+function getNearFutureSlots(slots, now, hoursAhead) {
+  return slots.filter(s => s.start >= now).slice(0, hoursAhead);
 }
 
-// 回傳 { cls, verdict, reason, tip } — verdict/reason 為首屏必看的精簡結論，
-// tip（如有）收進可折疊的 <details>，避免卡片在手機上過高。
-function buildDriveAdvice(puzi_pop, xingang_pop, minxiong_pop, dounan_pop) {
-  if (minxiong_pop >= 70 && puzi_pop < 50) {
-    return {
-      cls: 'ok',
-      verdict: '🟢 可以出門，注意方向',
-      reason: `民雄、斗南山邊對流劇烈（民雄 ${minxiong_pop}%），不適合前往；建議往西南（太保/朴子）移動`,
-      tip: `可前往免門票的【故宮南院兒童創意中心】室內避雨放電。<br>📺 <a href="https://tw.live" target="_blank">調閱朴子路面監視器確認乾濕</a>`,
-    };
+// 規則式評分：分數 = (100 - 現在降雨率) × 生活圈權重，越高分越推薦
+function computeDirectionScores(townSlots, now) {
+  return Object.entries(DIRECTION_WEIGHTS).map(([label, weight]) => {
+    const slots = townSlots[label] || [];
+    const currentPop = getCurrentSlotValue(slots, now) ?? 0;
+    const nearFuture = getNearFutureSlots(slots, now, 3);
+    return { label, weight, currentPop, nearFuture, score: (100 - currentPop) * weight };
+  }).sort((a, b) => b.score - a.score);
+}
+
+// 未來 2～3 小時內，推薦方向是否會轉為大雨（>=80%）
+function findUpcomingSpike(recommend) {
+  for (const r of recommend) {
+    const spike = r.nearFuture.find(s => s.value >= 80);
+    if (spike) return { label: r.label, spike };
   }
-  if (puzi_pop >= 70 && minxiong_pop < 50) {
-    return {
-      cls: 'ok',
-      verdict: '🟢 可以出門，注意方向',
-      reason: `朴子、新港海區平原對流影響（朴子 ${puzi_pop}%），不適合前往；建議往東北（大林）移動`,
-      tip: `前往免門票的【丸聚星球觀光工廠】吃免費貢丸湯避雨。<br>📺 <a href="https://tw.live" target="_blank">調閱民雄路面監視器確認乾濕</a>`,
-    };
+  return null;
+}
+
+// directionAdvisor：CWA 每小時降雨資料 + 生活圈權重 → 推薦/避免方向 + 未來雨勢提醒
+// 規則式評分，第一版不需要 AI 模型
+function directionAdvisor(townSlots, now) {
+  const scores = computeDirectionScores(townSlots, now);
+  const recommend = scores.slice(0, 2);
+  const avoid = scores[scores.length - 1];
+  const upcoming = findUpcomingSpike(recommend);
+
+  let warning = null;
+  if (upcoming) {
+    const deadline = new Date(upcoming.spike.start.getTime() - 3600 * 1000);
+    const deadlineText = deadline > now ? `${pad(deadline.getHours())}:00 前` : '盡快';
+    warning = `⚠️ 預計 <strong>${pad(upcoming.spike.start.getHours())}:00</strong>，${upcoming.label}降雨率將達 ${upcoming.spike.value}%，建議${deadlineText}出門`;
   }
-  if (puzi_pop >= 70 && minxiong_pop >= 70) {
-    return {
-      cls: 'danger',
-      verdict: '❌ 極不建議出門',
-      reason: '雲嘉六地全面籠罩在強降雨帶下，雙向皆不安全，請暫時留在室內避雨',
-      tip: null,
-    };
-  }
+
   return {
-    cls: 'ok',
-    verdict: '🟢 可以正常出門',
-    reason: '雲嘉各鄉鎮降雨機率均低（40% 以下），路面狀況良好',
-    tip: null,
+    scores,
+    recommendLabel: recommend.map(r => r.label).join('／') + '方向',
+    reasonText: '原因：' + recommend.map(r => `${r.label} ${r.currentPop}%`).join('　'),
+    avoidText: avoid.currentPop >= 50 ? `🚫 避免：${avoid.label}方向（${avoid.currentPop}%）` : '',
+    warning,
   };
 }
 
-function buildTimeAdvice(heavyRainSlot) {
-  if (!heavyRainSlot) {
-    return '📊 接下來對流平穩，暫無突發大暴雨預報';
-  }
-  const formatted_time = `${pad(heavyRainSlot.start.getHours())}:00`;
-  return `⚠️ 預計 <strong>${formatted_time}</strong> 前後，${getDisplayLocation(heavyRainSlot.label)}一帶對流快速爆發，請提早結束行程`;
-}
-
-function buildNowStrip(pops) {
-  const parts = Object.entries(pops).map(([label, val]) =>
-    `${getDisplayLocation(label)} ${val !== null ? val + '%' : '—'}`);
-  return `💧 現在降雨率　${parts.join('　')}`;
-}
-
 async function updateAiReport() {
-  const verdictEl = document.getElementById('ai-verdict');
+  const recommendEl = document.getElementById('ai-recommend');
   const reasonEl = document.getElementById('ai-reason');
+  const avoidEl = document.getElementById('ai-avoid');
+  const timeEl = document.getElementById('ai-report-time');
   const tipWrap = document.getElementById('ai-tip-wrap');
   const tipEl = document.getElementById('ai-tip');
-  const nowStripEl = document.getElementById('ai-now-strip');
-  const timeEl = document.getElementById('ai-report-time');
 
   try {
     const [chiayiHourly, yunlinHourly] = await Promise.all([
@@ -243,43 +235,27 @@ async function updateAiReport() {
 
     const now = new Date();
     const townSlots = {};
-    for (const [key, cfg] of Object.entries(HOURLY_TOWNS)) {
-      townSlots[key] = parseHourlyPop(hourlyData[cfg.county], cfg.town);
+    for (const [label, cfg] of Object.entries(HOURLY_TOWNS)) {
+      townSlots[label] = parseHourlyPop(hourlyData[cfg.county], cfg.town);
     }
 
-    const puzi_pop = getCurrentSlotValue(townSlots.puzi, now);
-    const xingang_pop = getCurrentSlotValue(townSlots.xingang, now);
-    const minxiong_pop = getCurrentSlotValue(townSlots.minxiong, now);
-    const dounan_pop = getCurrentSlotValue(townSlots.dounan, now);
+    const advice = directionAdvisor(townSlots, now);
 
-    nowStripEl.textContent = buildNowStrip({
-      朴子: puzi_pop, 新港: xingang_pop, 民雄: minxiong_pop, 斗南: dounan_pop,
-    });
+    recommendEl.textContent = `🟢 推薦：${advice.recommendLabel}`;
+    reasonEl.textContent = advice.reasonText;
+    avoidEl.textContent = advice.avoidText;
+    timeEl.innerHTML = advice.warning || '📊 未來 2–3 小時對流平穩，暫無突發大雨';
 
-    const advice = buildDriveAdvice(puzi_pop ?? 0, xingang_pop ?? 0, minxiong_pop ?? 0, dounan_pop ?? 0);
-    verdictEl.textContent = advice.verdict;
-    verdictEl.className = 'ai-verdict ' + advice.cls;
-    reasonEl.textContent = advice.reason;
-    if (advice.tip) {
-      tipEl.innerHTML = advice.tip;
-      tipWrap.hidden = false;
-    } else {
-      tipEl.innerHTML = '';
-      tipWrap.hidden = true;
-    }
-
-    const heavyRainSlot = findHeavyRainSlot(
-      Object.entries(HOURLY_TOWNS).map(([key, cfg]) => ({ label: cfg.label, slots: townSlots[key] })),
-      now
-    );
-    timeEl.innerHTML = buildTimeAdvice(heavyRainSlot);
+    tipEl.innerHTML = advice.scores
+      .map(s => `${s.label}　${s.currentPop}%`)
+      .join('<br>');
+    tipWrap.hidden = false;
   } catch (e) {
-    nowStripEl.textContent = '';
-    verdictEl.textContent = '⚠ 無法取得即時降雨資料';
-    verdictEl.className = 'ai-verdict warn';
+    recommendEl.textContent = '⚠ 無法取得即時降雨資料';
     reasonEl.textContent = '暫無出門建議，請稍後重試';
-    tipWrap.hidden = true;
+    avoidEl.textContent = '';
     timeEl.textContent = '';
+    tipWrap.hidden = true;
   }
 }
 
