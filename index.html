@@ -324,10 +324,12 @@ async function updateAiReport() {
   const tipEl = document.getElementById('ai-tip');
 
   try {
-    // 使用容錯版 fetch：個別鄉鎮失敗不影響整體
+    // 使用容錯版 fetch：帶鄉鎮過濾，個別失敗不影響整體
+    const chiayiTowns = Object.values(HOURLY_TOWNS).filter(c => c.county === 'chiayi').map(c => c.town);
+    const yunlinTowns  = Object.values(HOURLY_TOWNS).filter(c => c.county === 'yunlin').map(c => c.town);
     const [chiayiHourly, yunlinHourly] = await Promise.all([
-      fetchCountyHourly(HOURLY_COUNTY_CODES.chiayi),
-      fetchCountyHourly(HOURLY_COUNTY_CODES.yunlin),
+      fetchCountyHourly(HOURLY_COUNTY_CODES.chiayi, chiayiTowns),
+      fetchCountyHourly(HOURLY_COUNTY_CODES.yunlin, yunlinTowns),
     ]);
     const hourlyData = { chiayi: chiayiHourly, yunlin: yunlinHourly };
 
@@ -397,32 +399,79 @@ function updateDateBadge() {
     `${now.getFullYear()}/${pad(now.getMonth()+1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())} 更新`;
 }
 
+// 通用 fetch：解析 CWA Location 陣列（相容大/小寫 Locations 結構）
+function extractLocations(rec) {
+  if (rec.Locations?.[0]?.Location) return rec.Locations[0].Location;
+  if (rec.locations?.[0]?.location) return rec.locations[0].location;
+  if (Array.isArray(rec.Location)) return rec.Location;
+  return null;
+}
+
 async function fetchCounty(code) {
   const res = await fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/${code}?Authorization=${KEY}`);
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${code}`);
   const data = await res.json();
-  const rec = data.records;
-  // CWA API: some datasets use Locations[0].Location, others use locations[0].location
-  if (rec.Locations?.[0]?.Location) return rec.Locations[0].Location;
-  if (rec.locations?.[0]?.location) return rec.locations[0].location;
-  if (Array.isArray(rec.Location)) return rec.Location;
-  // Log full structure so user can diagnose via DevTools
-  console.error('[fetchCounty] 未知回傳結構:', code, JSON.stringify(rec).slice(0, 400));
-  throw new Error('Unexpected response structure for ' + code);
+  const locs = extractLocations(data.records);
+  if (!locs) {
+    console.error('[fetchCounty] 未知回傳結構:', code, JSON.stringify(data.records).slice(0, 400));
+    throw new Error('Unexpected response structure for ' + code);
+  }
+  return locs;
 }
 
-// hourly 資料容錯版：失敗時回傳空陣列，讓 advisor 仍能以 0% 預設值執行
-async function fetchCountyHourly(code) {
+// hourly 專用 fetch：帶 locationName + elementName 過濾，減小回傳量
+// 失敗時回傳 [] 不拋錯，讓 advisor 仍能以 0% 預設值執行
+async function fetchCountyHourly(code, townNames) {
+  // 帶上 locationName 過濾（減小回應）
+  // elementName 嘗試 '1小時降雨機率'；若資料集不支援也沒有副作用
+  const locParam = townNames.join(',');
+  const url = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/${code}` +
+    `?Authorization=${KEY}&locationName=${encodeURIComponent(locParam)}&elementName=1小時降雨機率`;
   try {
-    const locs = await fetchCounty(code);
-    console.log(`[hourly ok] ${code} → ${locs.length} 鄉鎮, elements:`,
-      locs[0]?.WeatherElement?.map(e => e.ElementName));
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.error(`[hourly fail] ${code} HTTP ${res.status}`);
+      return [];
+    }
+    const data = await res.json();
+    const locs = extractLocations(data.records);
+    if (!locs) {
+      console.error('[hourly fail] 未知結構:', code, JSON.stringify(data.records).slice(0, 500));
+      return [];
+    }
+    // 診斷：顯示實際回傳的 ElementName 清單，確認欄位名稱
+    const elements = locs[0]?.WeatherElement?.map(e => e.ElementName) ?? [];
+    console.log(`[hourly ok] ${code} → ${locs.length} 鄉鎮, elements:`, elements);
+    if (elements.length === 0) console.warn('[hourly warn] elements 為空，可能 elementName 參數不被接受');
     return locs;
   } catch(e) {
     console.error(`[hourly fail] ${code}:`, e.message);
     return [];
   }
 }
+
+// DevTools 手動診斷工具：在 console 執行 diagHourly() 可看完整原始結構
+window.diagHourly = async function(code = HOURLY_COUNTY_CODES.chiayi, town = '新港鄉') {
+  console.log(`[diag] 查詢 ${code} / ${town} (無過濾) …`);
+  try {
+    const url = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/${code}?Authorization=${KEY}&locationName=${encodeURIComponent(town)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    console.log('[diag] HTTP', res.status);
+    console.log('[diag] records keys:', Object.keys(data.records ?? {}));
+    const locs = extractLocations(data.records);
+    if (locs?.[0]) {
+      console.log('[diag] 第一筆鄉鎮:', locs[0].LocationName);
+      console.log('[diag] WeatherElements:', locs[0].WeatherElement?.map(e => e.ElementName));
+      const we = locs[0].WeatherElement?.[0];
+      if (we?.Time?.[0]) console.log('[diag] 第一筆 Time slot:', JSON.stringify(we.Time[0]));
+    } else {
+      console.log('[diag] 無法解析 Location，raw records:', JSON.stringify(data.records).slice(0, 800));
+    }
+  } catch(e) {
+    console.error('[diag error]', e.message);
+  }
+};
 
 function parseLocationData(locations, townName) {
   const loc = locations.find(l => l.LocationName === townName);
