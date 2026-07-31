@@ -287,6 +287,148 @@ function getCurrentSlotValue(slots, now) {
   return slot ? slot.value : null;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// P0：Weather Layer（Raw Parser → Metadata Inspector → Weather Adapter）
+// 目的：把 CWA schema 的不確定性封裝在這一層，P1 之後永遠不用知道
+// 資料到底叫 WeatherDescription 還是 Wx、是 3h 還是 6h 一格。
+// 目前完全不接入任何 UI 或評分邏輯，只在 console 驗證資料格式用。
+// P0 成功的標準：畫面沒有任何變化。
+// ═══════════════════════════════════════════════════════════════
+
+// ElementName 為推測值（依 CWA 公開文件慣例），尚未經真實 API 回傳核對。
+// P0-1 找不到就回 null，不會噴錯；真正的名稱清單會落在
+// result._rawWeatherElementNames，用來核對這裡的推測是否正確。
+const WEATHER_ELEMENT_NAMES = {
+  ProbabilityOfPrecipitation: '3小時降雨機率',
+  WeatherDescription: '天氣預報綜合描述',
+  Wx: '天氣現象',
+  WindDirection: '風向',
+  T: '溫度',
+  RH: '相對濕度',
+};
+
+// Wx 代碼對照表（草案，未經真實 API 核對，僅供 P0-3 fallback 使用）
+// 一旦拿到真實 Wx 值，應對照此表逐一修正
+const WX_CODE_TABLE = {
+  '01': '晴天', '02': '晴時多雲', '03': '多雲時晴', '04': '多雲',
+  '05': '多雲時陰', '06': '陰時多雲', '07': '陰天',
+  '08': '多雲短暫陣雨', '09': '陰短暫陣雨', '10': '短暫陣雨',
+  '11': '雷雨', '12': '多雲午後短暫雷陣雨', '13': '多雲時晴午後短暫雷陣雨',
+  '14': '陰有雨', '15': '多雲有雨', '16': '陰時多雲有雨',
+  '17': '多雲短暫雷陣雨', '18': '陰短暫雷陣雨', '19': '多雲陣雨或雷雨',
+  '20': '有雨或雷雨', '21': '晴午後短暫雷陣雨', '22': '晴短暫陣雨',
+};
+
+// P0-1：Raw Parser — 讀取所有已知可能欄位，不判斷、不轉換、不評分
+// 找不到的欄位一律回 null；保留原始 ElementValue（raw）供除錯與核對
+function parseRawWeatherElements(locations, townName) {
+  const loc = locations.find(l => l.LocationName === townName);
+  if (!loc) return null;
+
+  const result = {};
+  for (const [key, expectedName] of Object.entries(WEATHER_ELEMENT_NAMES)) {
+    const we = loc.WeatherElement.find(e => e.ElementName === expectedName);
+    if (!we) { result[key] = null; continue; }
+    result[key] = {
+      elementName: we.ElementName,
+      time: (we.Time || []).map(t => ({
+        start: new Date(t.StartTime),
+        end: new Date(t.EndTime),
+        raw: t.ElementValue?.[0] ?? null,
+      })),
+    };
+  }
+  // 這批資料實際包含的 ElementName 清單，用來核對上面猜測的名稱是否正確
+  result._rawWeatherElementNames = loc.WeatherElement.map(e => e.ElementName);
+  return result;
+}
+
+// P0-2：Metadata Inspector — 純描述資料格式，不參與任何評分
+// 自動算出時間間隔，不寫死 3h/6h/12h 的假設
+function inspectMetadata(entry) {
+  if (!entry || !entry.time?.length) return null;
+  const time = entry.time;
+  const count = time.length;
+  const intervalHours = count >= 2
+    ? Math.round((time[1].start - time[0].start) / 3600000)
+    : null;
+  const valueKey = time[0].raw ? Object.keys(time[0].raw)[0] : null;
+  return { elementName: entry.elementName, count, intervalHours, valueKey };
+}
+
+// P0-3：Weather Adapter — 統一輸出，隱藏來源差異
+// 後面所有邏輯只吃 weather[i].text，不必知道來源是 WeatherDescription 還是 Wx
+// Single Source of Truth：這裡只回傳「天氣語意」，不解析降雨機率/溫度/濕度
+// （那些各自有獨立權威欄位：ProbabilityOfPrecipitation / T / RH）
+function buildWeatherLayer(rawFields) {
+  if (!rawFields) return null;
+
+  const descMeta = inspectMetadata(rawFields.WeatherDescription);
+  const wxMeta = inspectMetadata(rawFields.Wx);
+
+  if (rawFields.WeatherDescription) {
+    return rawFields.WeatherDescription.time.map(t => ({
+      start: t.start,
+      end: t.end,
+      text: t.raw?.WeatherDescription ?? String(t.raw ?? ''),
+      source: 'WeatherDescription',
+      confidence: 'high',
+      intervalHours: descMeta?.intervalHours ?? null,
+      version: 'P0.1',
+      raw: t.raw,
+    }));
+  }
+
+  if (rawFields.Wx) {
+    return rawFields.Wx.time.map(t => {
+      const code = t.raw?.Weather ?? t.raw?.WeatherCode ?? t.raw?.Wx ?? null;
+      return {
+        start: t.start,
+        end: t.end,
+        text: WX_CODE_TABLE[code] ?? `未知代碼(${code})`,
+        source: 'Wx',
+        confidence: 'medium',
+        intervalHours: wxMeta?.intervalHours ?? null,
+        version: 'P0.1',
+        raw: t.raw,
+      };
+    });
+  }
+
+  return [{
+    start: null, end: null, text: '',
+    source: 'Unknown', confidence: 'low',
+    intervalHours: null, version: 'P0.1', raw: null,
+  }];
+}
+
+// 對所有方向鄉鎮跑一次 P0 三層，結果暫存供 console 診斷用
+// 不接入 UI、不接入評分；fetchAll 每次刷新會靜默重算
+let cachedWeatherLayers = {};
+
+function buildAllWeatherLayers(countyData) {
+  const result = {};
+  for (const [label, cfg] of Object.entries(DIRECTION_TOWNS)) {
+    const locs = countyData?.[cfg.dataset] || [];
+    const raw = parseRawWeatherElements(locs, cfg.town);
+    result[label] = {
+      raw,
+      metadata: raw
+        ? Object.fromEntries(Object.keys(WEATHER_ELEMENT_NAMES).map(k => [k, inspectMetadata(raw[k])]))
+        : null,
+      weather: buildWeatherLayer(raw),
+    };
+  }
+  return result;
+}
+
+// 除錯用：在瀏覽器 console 呼叫 inspectWeatherLayer() 檢查真實資料格式
+// inspectWeatherLayer()        → 全部方向
+// inspectWeatherLayer('新港')  → 單一方向
+window.inspectWeatherLayer = function(label) {
+  return label ? cachedWeatherLayers[label] : cachedWeatherLayers;
+};
+
 // 未來 N 小時（不含目前這一格）
 function getNearFutureSlots(slots, now, hoursAhead) {
   return slots.filter(s => s.start >= now).slice(0, hoursAhead);
@@ -693,6 +835,14 @@ async function fetchAll() {
     cachedWindStations = windStations;
 
     cachedCountyData = { 'F-D0047-029': chiayi, 'F-D0047-025': yunlin };
+
+    // P0：靜默重算 Weather Layer，不影響任何畫面渲染
+    // 在瀏覽器 console 呼叫 inspectWeatherLayer() 檢查真實資料格式
+    try {
+      cachedWeatherLayers = buildAllWeatherLayers(cachedCountyData);
+    } catch (e) {
+      console.warn('[P0 weatherLayer]', e.message);
+    }
 
     const allData = {};
     for (const loc of LOCATIONS) {
