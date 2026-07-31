@@ -24,6 +24,19 @@
   .loading .spinner{display:block}
   .loading .btn-icon{display:none}
   @keyframes spin{to{transform:rotate(360deg)}}
+  /* Transposed table: sticky location column */
+  .loc-head{position:sticky;left:0;z-index:3;background:var(--surface2);border-right:2px solid var(--border);text-align:center;color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:.78rem;font-weight:700;letter-spacing:.05em}
+  .loc-cell{position:sticky;left:0;z-index:1;background:var(--surface);border-right:1px solid var(--border);font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace;white-space:nowrap;min-width:44px;padding:8px 8px}
+  tbody tr:hover .loc-cell{background:var(--surface2)}
+  .now-col-head{color:var(--accent)!important;background:rgba(47,111,237,.12)!important}
+  .now-col-cell{background:rgba(47,111,237,.07)!important}
+  /* 雷達回波 */
+  .radar-section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:20px}
+  .radar-img{width:100%;border-radius:8px;display:block;min-height:120px;background:var(--surface2)}
+  .radar-error{display:none;text-align:center;padding:24px 12px;color:var(--muted);font-size:.78rem;line-height:1.8}
+  .radar-error a{color:var(--accent);text-decoration:none}
+  .radar-footer{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:.72rem;color:var(--muted);font-family:'JetBrains Mono',monospace}
+  .radar-footer a{color:var(--accent);text-decoration:none}
   .status-msg{text-align:center;font-size:.78rem;color:var(--muted);margin-bottom:18px;min-height:18px;font-family:'JetBrains Mono',monospace}
   .status-msg.ok{color:var(--green)}
   .status-msg.error{color:var(--red)}
@@ -123,6 +136,21 @@
     <a href="https://www.mvdis.gov.tw/m3-emv-1968/cctv/index" target="_blank">🏞 省道監視器</a>
   </div>
   <div class="cctv-weight-note">* CCTV 為單點量測，僅供參考；夜間或鏡頭不清晰時建議設「不確定」</div>
+</div>
+
+<!-- 📡 雷達回波：即時判斷雨雲方向與趨勢，輔助 3h 預報 -->
+<div class="section-title">📡 雷達回波｜即時降雨雲圖</div>
+<div class="radar-section">
+  <img id="radarImg" class="radar-img" alt="CWA雷達回波圖"
+       onerror="this.style.display='none';document.getElementById('radarError').style.display='block'" />
+  <div id="radarError" class="radar-error">
+    ⚠ 雷達圖無法載入<br>
+    <a href="https://www.cwa.gov.tw/V8/C/W/Radar.html" target="_blank">🔗 點此開啟 CWA 即時雷達</a>
+  </div>
+  <div class="radar-footer">
+    <span id="radarTime"></span>
+    <a href="https://www.cwa.gov.tw/V8/C/W/Radar.html" target="_blank">🔗 即時動態雷達</a>
+  </div>
 </div>
 
 <!-- 六地對照（24小時） -->
@@ -452,22 +480,27 @@ function getDayLabel(dateStr) {
 }
 
 function makeTable(dateKey, hours, locNames, allData, currentDateKey, currentHour) {
-  const rows = hours.map(h => {
-    const isNow = dateKey === currentDateKey && h === currentHour;
-    const cells = locNames.map(name => {
+  // Transposed: rows = locations, cols = time
+  const nowColIdx = (dateKey === currentDateKey) ? hours.indexOf(currentHour) : -1;
+
+  const headers = hours.map((h, i) => {
+    const isNow = i === nowColIdx;
+    return `<th class="time-col${isNow ? ' now-col-head' : ''}">${h}${isNow ? '◀' : ''}</th>`;
+  }).join('');
+
+  const rows = locNames.map(name => {
+    const cells = hours.map((h, i) => {
+      const isNow = i === nowColIdx;
       const pct = allData[name]?.[dateKey]?.[h] ?? null;
       const { bg, text } = getRainColor(pct);
       const label = pct !== null ? `${pct}%` : '—';
-      return `<td><span class="rain-cell" style="background:${bg};color:${text}">${label}</span></td>`;
+      return `<td class="${isNow ? 'now-col-cell' : ''}"><span class="rain-cell" style="background:${bg};color:${text}">${label}</span></td>`;
     }).join('');
-    return `<tr class="${isNow ? 'now-row' : ''}">
-      <td class="time-cell">${h}${isNow ? ' ◀' : ''}</td>${cells}
-    </tr>`;
+    return `<tr><td class="loc-cell">${getDisplayLocation(name)}</td>${cells}</tr>`;
   }).join('');
 
-  const headers = locNames.map(n => `<th class="loc">${getDisplayLocation(n)}</th>`).join('');
   return `<div class="table-wrap"><table>
-    <thead><tr><th class="time-col">時間</th>${headers}</tr></thead>
+    <thead><tr><th class="loc-head">地點</th>${headers}</tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
 }
@@ -475,7 +508,8 @@ function makeTable(dateKey, hours, locNames, allData, currentDateKey, currentHou
 function renderAll(allData) {
   const now = new Date();
   const currentDateKey = `${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
-  const currentHour = `${pad(now.getHours())}:00`;
+  // Snap to the 3h slot that contains the current time (e.g. 14:30 → '12:00')
+  const currentHour = `${pad(Math.floor(now.getHours() / 3) * 3)}:00`;
 
   // 今明兩天的 dateKey
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -516,6 +550,7 @@ async function fetchAll() {
     }
 
     renderAll(allData);
+    refreshRadar();
     setStatus('✓ 資料已更新', 'ok');
   } catch(e) {
     console.error('[fetchAll]', e);
@@ -527,7 +562,23 @@ async function fetchAll() {
   setLoading(false);
 }
 
+function refreshRadar() {
+  const img = document.getElementById('radarImg');
+  const timeEl = document.getElementById('radarTime');
+  const errEl = document.getElementById('radarError');
+  if (!img) return;
+  // Cache-bust so browser fetches latest image from CWA server
+  img.style.display = 'block';
+  if (errEl) errEl.style.display = 'none';
+  img.src = `https://www.cwa.gov.tw/Data/radar/CV1_3600_3600.png?_=${Date.now()}`;
+  if (timeEl) {
+    const t = new Date();
+    timeEl.textContent = `更新：${pad(t.getHours())}:${pad(t.getMinutes())}`;
+  }
+}
+
 renderCctvGrid();
+refreshRadar();
 fetchAll();
 </script>
 </body>
