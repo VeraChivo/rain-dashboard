@@ -375,14 +375,37 @@ const WEATHER_SIGNAL_TAXONOMY = [
 
 // 同一等級只要有任一關鍵字命中就標記一次，避免「晴時多雲」同時撞到
 // 「晴」跟「晴時多雲」兩個關鍵字造成同等級重複計分
-function extractWeatherSignals(text) {
+// 這一步只收集「候選訊號」，還不做取捨——例如「雷陣雨」會同時
+// 命中 thunder（雷陣雨）跟 rain（陣雨的字根不會，但文字裡若同時
+// 出現「短暫陣雨」「雷雨」兩種描述時就會撞在一起），交給下一步整理
+function extractSignalCandidates(text) {
   if (!text) return [];
-  const signals = [];
+  const candidates = [];
   for (const { level, keywords, deduct } of WEATHER_SIGNAL_TAXONOMY) {
     const matched = keywords.filter(kw => text.includes(kw));
-    if (matched.length > 0) signals.push({ level, matched, deduct });
+    if (matched.length > 0) candidates.push({ level, matched, deduct });
   }
-  return signals;
+  return candidates;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P1-1.5：Signal Normalization — 訊號優先序整理
+// 同一時段常常同時撞到多個等級（例如「雷陣雨」文字裡「多雲」也在，
+// 會同時命中 thunder 跟 neutral）。若不整理，P1-2 加總分數時會把
+// 同一件事扣兩次分（Double Dipping）。
+// 這裡只留「候選訊號中最高優先級」的單一結果，其餘保留在
+// signalCandidates 供除錯稽核，不參與計分。
+// 優先序：severe > thunder > rain > stable > neutral
+// ═══════════════════════════════════════════════════════════════
+const SIGNAL_PRIORITY = ['severe', 'thunder', 'rain', 'stable', 'neutral'];
+
+function normalizeSignal(candidates) {
+  if (!candidates.length) return null;
+  for (const level of SIGNAL_PRIORITY) {
+    const hit = candidates.find(c => c.level === level);
+    if (hit) return hit;
+  }
+  return candidates[0]; // 理論上不會走到這裡，taxonomy 已涵蓋所有 level
 }
 
 // 午後判斷改用 StartTime，而非依賴 WeatherDescription 文字裡是否寫「午後」
@@ -393,12 +416,24 @@ function isAfternoonWindow(date) {
   return h >= 12 && h < 18;
 }
 
+// 時間條件獨立於天氣語意之外：afternoon 不是「天氣訊號」，是「時間窗」，
+// P1-2 會分開套用（例如 afternoon + thunder → 額外加乘），不併入 signal 本身
+function extractTimeFlags(date) {
+  const flags = [];
+  if (isAfternoonWindow(date)) flags.push('afternoon');
+  return flags;
+}
+
 function attachSignals(entries) {
-  return entries.map(e => ({
-    ...e,
-    signals: extractWeatherSignals(e.text),
-    afternoon: isAfternoonWindow(e.start),
-  }));
+  return entries.map(e => {
+    const candidates = extractSignalCandidates(e.text);
+    return {
+      ...e,
+      signal: normalizeSignal(candidates),   // 最終單一訊號，P1-2 只吃這個
+      signalCandidates: candidates,          // 除錯／稽核用，不參與計分
+      timeFlags: extractTimeFlags(e.start),  // 與天氣語意分開的時間條件
+    };
+  });
 }
 
 // P0-3：Weather Adapter — 統一輸出，隱藏來源差異
@@ -524,22 +559,30 @@ function renderDebugWeatherPanel() {
 
     const w0 = layer.weather?.[0];
     if (w0) {
-      lines.push(`  → weather[0]: source=${w0.source} confidence=${w0.confidence} afternoon=${w0.afternoon}`);
+      const flagStr = w0.timeFlags?.length ? w0.timeFlags.join(',') : '-';
+      lines.push(`  → weather[0]: source=${w0.source} confidence=${w0.confidence} timeFlags=[${flagStr}]`);
       lines.push(`     text="${(w0.text || '').slice(0, 60)}"`);
-      const sigStr = w0.signals?.length
-        ? w0.signals.map(s => `${s.level}(${s.matched.join('/')})`).join('　')
+      const finalStr = w0.signal
+        ? `${w0.signal.level}（命中:${w0.signal.matched.join('/')}）`
         : '（無訊號命中）';
-      lines.push(`     signals: ${sigStr}`);
+      lines.push(`     signal（最終）: ${finalStr}`);
+      if (w0.signalCandidates?.length > 1) {
+        const candStr = w0.signalCandidates.map(s => s.level).join(',');
+        lines.push(`     candidates（整理前，供稽核）: [${candStr}]`);
+      }
     }
 
-    // P1-1 驗證：把未來 8 格（24h）的訊號攤開看，確認關鍵字表能不能吃到真實文字
+    // P1-1.5 驗證：把未來 8 格（24h）的訊號攤開看，確認優先序整理有沒有正確
+    // 只留一個最終 signal，若整理前有多個 candidates 會額外標註 *
     const upcoming = (layer.weather || []).slice(0, 8);
     if (upcoming.length > 1) {
-      lines.push('  未來 24h 訊號掃描:');
+      lines.push('  未來 24h 訊號掃描（最終 signal，* = 整理前有多個候選）:');
       for (const w of upcoming) {
         const hh = w.start ? `${String(w.start.getHours()).padStart(2,'0')}:00` : '--:--';
-        const sig = w.signals?.length ? w.signals.map(s => s.level).join(',') : '-';
-        lines.push(`    ${hh}${w.afternoon ? '☼' : ' '} [${sig}]`);
+        const isAfternoon = w.timeFlags?.includes('afternoon');
+        const sig = w.signal ? w.signal.level : '-';
+        const multi = (w.signalCandidates?.length > 1) ? '*' : '';
+        lines.push(`    ${hh}${isAfternoon ? '☼' : ' '} [${sig}]${multi}`);
       }
     }
     lines.push('');
