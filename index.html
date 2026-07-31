@@ -356,6 +356,51 @@ function inspectMetadata(entry) {
   return { elementName: entry.elementName, count, intervalHours, valueKey };
 }
 
+// ═══════════════════════════════════════════════════════════════
+// P1-1：Weather Signal Extractor — 從 weather.text 抽出「天氣語意標籤」
+// 只做訊號抽取，不算分數；P1-2 才會把 signals 轉成風險分數
+// 只掃天氣現象詞（雷雨/陣雨/晴/多雲…），刻意不掃數值
+// （降雨機率/溫度/濕度已各自有獨立權威欄位，這裡再抓一次會雙重計分）
+// ═══════════════════════════════════════════════════════════════
+
+// deduct 為預留給 P1-2 的風險分權重（正值=扣分，負值=加分），
+// P1-1 本身不加總、不計分，只標記命中哪個等級與哪些關鍵字
+const WEATHER_SIGNAL_TAXONOMY = [
+  { level: 'severe',  keywords: ['大雨', '豪雨', '強陣風'],                  deduct: 15 },
+  { level: 'thunder', keywords: ['雷雨', '雷陣雨'],                          deduct: 10 },
+  { level: 'rain',    keywords: ['短暫陣雨', '局部雨', '局部陣雨', '有雨'],   deduct: 5 },
+  { level: 'stable',  keywords: ['晴時多雲', '晴'],                         deduct: -5 },
+  { level: 'neutral', keywords: ['多雲', '陰'],                             deduct: 0 },
+];
+
+// 同一等級只要有任一關鍵字命中就標記一次，避免「晴時多雲」同時撞到
+// 「晴」跟「晴時多雲」兩個關鍵字造成同等級重複計分
+function extractWeatherSignals(text) {
+  if (!text) return [];
+  const signals = [];
+  for (const { level, keywords, deduct } of WEATHER_SIGNAL_TAXONOMY) {
+    const matched = keywords.filter(kw => text.includes(kw));
+    if (matched.length > 0) signals.push({ level, matched, deduct });
+  }
+  return signals;
+}
+
+// 午後判斷改用 StartTime，而非依賴 WeatherDescription 文字裡是否寫「午後」
+// （逐3小時描述常常沒有這兩個字，只有全縣總述才會寫「午後有雷陣雨」）
+function isAfternoonWindow(date) {
+  if (!date) return false;
+  const h = date.getHours();
+  return h >= 12 && h < 18;
+}
+
+function attachSignals(entries) {
+  return entries.map(e => ({
+    ...e,
+    signals: extractWeatherSignals(e.text),
+    afternoon: isAfternoonWindow(e.start),
+  }));
+}
+
 // P0-3：Weather Adapter — 統一輸出，隱藏來源差異
 // 後面所有邏輯只吃 weather[i].text，不必知道來源是 WeatherDescription 還是 Wx
 // Single Source of Truth：這裡只回傳「天氣語意」，不解析降雨機率/溫度/濕度
@@ -367,20 +412,20 @@ function buildWeatherLayer(rawFields) {
   const wxMeta = inspectMetadata(rawFields.Wx);
 
   if (rawFields.WeatherDescription) {
-    return rawFields.WeatherDescription.time.map(t => ({
+    return attachSignals(rawFields.WeatherDescription.time.map(t => ({
       start: t.start,
       end: t.end,
       text: t.raw?.WeatherDescription ?? String(t.raw ?? ''),
       source: 'WeatherDescription',
       confidence: 'high',
       intervalHours: descMeta?.intervalHours ?? null,
-      version: 'P0.1',
+      version: 'P1.1',
       raw: t.raw,
-    }));
+    })));
   }
 
   if (rawFields.Wx) {
-    return rawFields.Wx.time.map(t => {
+    return attachSignals(rawFields.Wx.time.map(t => {
       const code = t.raw?.Weather ?? t.raw?.WeatherCode ?? t.raw?.Wx ?? null;
       return {
         start: t.start,
@@ -389,17 +434,17 @@ function buildWeatherLayer(rawFields) {
         source: 'Wx',
         confidence: 'medium',
         intervalHours: wxMeta?.intervalHours ?? null,
-        version: 'P0.1',
+        version: 'P1.1',
         raw: t.raw,
       };
-    });
+    }));
   }
 
-  return [{
+  return attachSignals([{
     start: null, end: null, text: '',
     source: 'Unknown', confidence: 'low',
-    intervalHours: null, version: 'P0.1', raw: null,
-  }];
+    intervalHours: null, version: 'P1.1', raw: null,
+  }]);
 }
 
 // 對所有方向鄉鎮跑一次 P0 三層，結果暫存供 console 診斷用
@@ -479,8 +524,23 @@ function renderDebugWeatherPanel() {
 
     const w0 = layer.weather?.[0];
     if (w0) {
-      lines.push(`  → weather[0]: source=${w0.source} confidence=${w0.confidence}`);
+      lines.push(`  → weather[0]: source=${w0.source} confidence=${w0.confidence} afternoon=${w0.afternoon}`);
       lines.push(`     text="${(w0.text || '').slice(0, 60)}"`);
+      const sigStr = w0.signals?.length
+        ? w0.signals.map(s => `${s.level}(${s.matched.join('/')})`).join('　')
+        : '（無訊號命中）';
+      lines.push(`     signals: ${sigStr}`);
+    }
+
+    // P1-1 驗證：把未來 8 格（24h）的訊號攤開看，確認關鍵字表能不能吃到真實文字
+    const upcoming = (layer.weather || []).slice(0, 8);
+    if (upcoming.length > 1) {
+      lines.push('  未來 24h 訊號掃描:');
+      for (const w of upcoming) {
+        const hh = w.start ? `${String(w.start.getHours()).padStart(2,'0')}:00` : '--:--';
+        const sig = w.signals?.length ? w.signals.map(s => s.level).join(',') : '-';
+        lines.push(`    ${hh}${w.afternoon ? '☼' : ' '} [${sig}]`);
+      }
     }
     lines.push('');
   }
