@@ -96,6 +96,16 @@
   .source-note{text-align:center;margin-top:24px;font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:1.8}
   .source-note a{color:var(--accent);text-decoration:none}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  /* 雨胞移動方向文字報告 */
+  .rmv-card{background:linear-gradient(135deg,rgba(124,92,252,.06),rgba(47,111,237,.06));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
+  .rmv-title{font-size:.82rem;font-weight:700;color:var(--accent2);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em}
+  .rmv-movement{font-size:.9rem;font-weight:700;color:var(--text);margin-bottom:2px;line-height:1.7}
+  .rmv-movement strong{color:var(--accent2)}
+  .rmv-divider{border:none;border-top:1px solid var(--border);margin:8px 0}
+  .rmv-label{font-size:.75rem;color:var(--muted);margin-bottom:6px;font-family:'JetBrains Mono',monospace}
+  .rmv-route{font-size:.82rem;color:var(--text);margin-bottom:5px;padding-left:2px;line-height:1.5}
+  .rmv-note{font-size:.7rem;color:var(--muted);display:block;padding-left:14px}
+  .rmv-time{font-size:.7rem;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:8px}
 </style>
 </head>
 <body>
@@ -123,6 +133,12 @@
     <summary>查看各方向即時降雨率</summary>
     <div id="ai-tip"></div>
   </details>
+</div>
+
+<!-- 🌬 雨胞移動方向（風向推算）：告訴你雨往哪邊走、哪個方向最安全 -->
+<div class="rmv-card">
+  <div class="rmv-title">🌬 雨胞移動方向</div>
+  <div id="rainMovementCard"><span style="color:var(--muted)">載入中…</span></div>
 </div>
 
 <!-- 📷 CCTV 即時降雨校正（手動設定，修正方向評分；不取代 CWA 預報） -->
@@ -370,6 +386,7 @@ function updateAiReport(countyData) {
       avoidEl.textContent = '';
       timeEl.textContent = '';
       tipWrap.hidden = true;
+      updateRainMovementCard(calcRainVector(cachedWindStations), []);
       return;
     }
 
@@ -391,6 +408,10 @@ function updateAiReport(countyData) {
       })
       .join('<br>');
     tipWrap.hidden = false;
+
+    // Rain movement card uses same scores + cached wind data
+    const rainVec = calcRainVector(cachedWindStations);
+    updateRainMovementCard(rainVec, advice.scores);
   } catch (e) {
     console.error('[updateAiReport]', e);
     recommendEl.textContent = '⚠ 資料處理失敗';
@@ -399,6 +420,134 @@ function updateAiReport(countyData) {
     timeEl.textContent = '';
     tipWrap.hidden = true;
   }
+}
+
+// ─────────────────────────────────────────────
+// 雨胞移動方向：以 CWA 自動氣象站風向推算
+// ─────────────────────────────────────────────
+let cachedWindStations = [];
+
+// Approximate bearing from 新港 (home base) to each destination
+const TOWN_BEARING = {
+  溪口: 40,   // NE
+  民雄: 88,   // E
+  大林: 60,   // ENE
+  斗南: 45,   // NE
+  北港: 292,  // WNW
+  朴子: 231,  // SW
+};
+
+const TOWN_DISTANCE_KM = {
+  溪口: 7,  民雄: 12, 大林: 20,
+  斗南: 23, 北港: 10, 朴子: 18,
+};
+
+async function fetchWindObs() {
+  const counties = ['嘉義縣', '雲林縣'];
+  const responses = await Promise.allSettled(
+    counties.map(c =>
+      fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Authorization=${KEY}&CountyName=${encodeURIComponent(c)}`)
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    )
+  );
+  const stations = [];
+  for (const r of responses) {
+    if (r.status !== 'fulfilled') continue;
+    const list = r.value?.records?.Station;
+    if (!Array.isArray(list)) continue;
+    for (const s of list) {
+      const we = s.WeatherElement || s.weatherElement || {};
+      const wdir = we.WindDirection ?? we.WDIR;
+      const wspd = we.WindSpeed ?? we.WDSD;
+      if (typeof wdir === 'number' && typeof wspd === 'number' && wspd > 0 && wdir >= 0 && wdir <= 360) {
+        stations.push({ name: s.StationName, wdir, wspdMs: wspd });
+      }
+    }
+  }
+  return stations;
+}
+
+function calcRainVector(stations) {
+  if (!stations?.length) return null;
+  let sumU = 0, sumV = 0, count = 0;
+  for (const s of stations) {
+    // wdir = direction wind comes FROM → wind blows TOWARD (wdir+180)%360
+    const rad = ((s.wdir + 180) % 360) * Math.PI / 180;
+    sumU += s.wspdMs * Math.sin(rad);  // eastward
+    sumV += s.wspdMs * Math.cos(rad);  // northward
+    count++;
+  }
+  if (!count) return null;
+  const u = sumU / count, v = sumV / count;
+  const speedMs = Math.sqrt(u * u + v * v);
+  if (speedMs < 0.5) return null;
+  const movingToDeg = ((Math.atan2(u, v) * 180 / Math.PI) + 360) % 360;
+  const comingFromDeg = (movingToDeg + 180) % 360;
+  return { speedMs, speedKmh: speedMs * 3.6, movingToDeg, comingFromDeg };
+}
+
+function degToCompass(deg) {
+  const dirs = ['北', '東北', '東', '東南', '南', '西南', '西', '西北'];
+  return dirs[Math.round(((deg % 360) + 360) / 45) % 8];
+}
+
+function routeRisk(townBearing, comingFromDeg) {
+  // angle between travel direction and rain's source direction
+  // diff=0 → heading directly INTO rain  → MAX risk
+  // diff=180 → moving away from source  → best
+  const diff = Math.abs(((townBearing - comingFromDeg) + 180) % 360 - 180);
+  if (diff <= 45)  return { tag: '⚠ 高風險', score: 0, note: '方向正對雨胞來向，即將迎雨' };
+  if (diff <= 90)  return { tag: '△ 中風險', score: 1, note: '雨胞將從側面穿越路徑' };
+  if (diff <= 135) return { tag: '○ 低風險', score: 2, note: '方向偏離雨胞，相對安全' };
+  return          { tag: '✓ 最佳',   score: 3, note: '背向雨胞來源，緩衝時間最長' };
+}
+
+function estimateMinutes(townLabel, rainVec) {
+  const dist = TOWN_DISTANCE_KM[townLabel];
+  if (!dist || !rainVec || rainVec.speedKmh < 2) return null;
+  return Math.round(dist / rainVec.speedKmh * 60);
+}
+
+function updateRainMovementCard(rainVec, directionScores) {
+  const card = document.getElementById('rainMovementCard');
+  if (!card) return;
+
+  if (!rainVec) {
+    card.innerHTML = '<div style="font-size:.8rem;color:var(--muted)">風速資料未取得，無法推算雨胞移動方向</div>';
+    return;
+  }
+
+  const fromDir = degToCompass(rainVec.comingFromDeg);
+  const toDir   = degToCompass(rainVec.movingToDeg);
+  const spd     = rainVec.speedKmh.toFixed(0);
+
+  const routes = Object.entries(TOWN_BEARING)
+    .map(([label, bearing]) => {
+      const risk  = routeRisk(bearing, rainVec.comingFromDeg);
+      const score = directionScores?.find(s => s.label === label);
+      const pop   = score?.currentPop ?? null;
+      const mins  = estimateMinutes(label, rainVec);
+      return { label, risk, pop, mins };
+    })
+    .sort((a, b) => b.risk.score - a.risk.score || (a.pop ?? 100) - (b.pop ?? 100));
+
+  const routeHtml = routes.map((r, i) => {
+    const popStr  = r.pop !== null ? `　降雨率 ${r.pop}%` : '';
+    const minsStr = r.mins !== null && r.risk.score <= 1
+      ? `　⏱ 約 ${r.mins} 分鐘後雨胞可能到達` : '';
+    return `<div class="rmv-route">${i + 1}. ${r.risk.tag} → 往<strong>${r.label}</strong>${popStr}
+      <span class="rmv-note">${r.risk.note}${minsStr}</span>
+    </div>`;
+  }).join('');
+
+  const now = new Date();
+  card.innerHTML = `
+    <div class="rmv-movement">雨從 <strong>${fromDir}</strong> 往 <strong>${toDir}</strong> 移動（風速約 <strong>${spd} km/h</strong>）</div>
+    <hr class="rmv-divider">
+    <div class="rmv-label">路線優先順序（依雨胞迴避風險排列）：</div>
+    ${routeHtml}
+    <div class="rmv-time">風向站資料更新：${pad(now.getHours())}:${pad(now.getMinutes())}</div>
+  `;
 }
 
 function getRainColor(pct) {
@@ -536,10 +685,12 @@ async function fetchAll() {
   updateDateBadge();
 
   try {
-    const [chiayi, yunlin] = await Promise.all([
+    const [chiayi, yunlin, windStations] = await Promise.all([
       fetchCounty('F-D0047-029'),
       fetchCounty('F-D0047-025'),
+      fetchWindObs().catch(e => { console.warn('[wind obs]', e.message); return []; }),
     ]);
+    cachedWindStations = windStations;
 
     cachedCountyData = { 'F-D0047-029': chiayi, 'F-D0047-025': yunlin };
 
