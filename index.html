@@ -64,9 +64,8 @@
 
   .ai-report{background:linear-gradient(135deg,rgba(47,111,237,.07),rgba(124,92,252,.07));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
   .ai-report-title{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-align:center}
-  .ai-recommend{font-size:1rem;font-weight:700;color:var(--green);margin-bottom:2px;text-align:center}
+  .ai-recommend{font-size:1rem;font-weight:700;margin-bottom:2px;text-align:center}
   .ai-reason{font-size:.82rem;color:var(--text);line-height:1.6;margin-bottom:6px;text-align:center}
-  .ai-poplist-title{font-size:.76rem;color:var(--muted);margin-bottom:5px}
   .ai-poplist{display:flex;flex-direction:column;align-items:center;gap:2px}
   .ai-poplist-row{display:flex;justify-content:space-between;width:150px;font-family:'JetBrains Mono',monospace;font-size:.85rem}
   .ai-poplist-row .loc{color:var(--text)}
@@ -129,7 +128,7 @@
 
 <!-- 🚗 出門建議決策卡（directionAdvisor）：以生活圈權重 × 現在降雨率排序推薦/避免方向 -->
 <div class="ai-report" id="aiReport">
-  <div class="ai-report-title">🚗 今日出門建議</div>
+  <div class="ai-report-title">🛵 今天出門去哪兒</div>
   <div class="ai-recommend" id="ai-recommend">載入中…</div>
   <div class="ai-reason" id="ai-reason"></div>
   <div class="ai-avoid" id="ai-avoid"></div>
@@ -543,11 +542,11 @@ function buildRiskTimeline(raw, weatherEntries) {
 // 目前只接到 debug 面板，尚未接到正式的「今日出門建議」卡片
 // ═══════════════════════════════════════════════════════════════
 function scoreToColor(score) {
-  if (score === null || score === undefined) return { emoji: '⚪', label: '無資料' };
-  if (score >= 80) return { emoji: '🟢', label: '綠' };
-  if (score >= 60) return { emoji: '🟡', label: '黃' };
-  if (score >= 40) return { emoji: '🟠', label: '橘' };
-  return { emoji: '🔴', label: '紅' };
+  if (score === null || score === undefined) return { emoji: '⚪', label: '無資料', css: 'var(--muted)' };
+  if (score >= 80) return { emoji: '🟢', label: '綠', css: 'var(--green)' };
+  if (score >= 60) return { emoji: '🟡', label: '黃', css: '#ca8a04' };
+  if (score >= 40) return { emoji: '🟠', label: '橘', css: '#ea580c' };
+  return { emoji: '🔴', label: '紅', css: 'var(--red)' };
 }
 
 function scoreToActionText(score) {
@@ -556,6 +555,48 @@ function scoreToActionText(score) {
   if (score >= 60) return '可以出門，抓準時間';
   if (score >= 40) return '附近活動較適合，準備躲好';
   return '在家吧！去哪躲';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P1-3c／P3：把 P1-2 算好的 finalScore 接上主卡片
+// 用「現在」這個時段，找出每個方向的風險分，並依 top1/top2 分差
+// 分三級推薦：
+//   gap <5   → 不推薦，顯示「各方向差異不大」
+//   gap >=5  → 推薦最佳方向
+//   gap >=15 → 標示「明顯較佳方向」
+// 目前這條線尚未接 CCTV 校正（CCTV 面板仍可切換，但不影響這裡的分數，
+// 要等排定的 CCTV 整合階段才會串起來）
+// ═══════════════════════════════════════════════════════════════
+function getCurrentRiskForLabel(label, now) {
+  const risk = cachedWeatherLayers[label]?.risk;
+  if (!risk) return null;
+  return risk.find(r => r.start && r.end && now >= r.start && now < r.end) || null;
+}
+
+function buildWeatherLayerAdvice(now) {
+  const entries = Object.keys(DIRECTION_WEIGHTS).map(label => {
+    const r = getCurrentRiskForLabel(label, now);
+    return {
+      label,
+      finalScore: r?.risk?.finalScore ?? null,
+      text: r?.text ?? '',
+      signalLevel: r?.signalLevel ?? 'unknown',
+    };
+  });
+
+  const withScore = entries.filter(e => e.finalScore !== null);
+  if (withScore.length === 0) return { noData: true, entries };
+
+  const sorted = [...withScore].sort((a, b) => b.finalScore - a.finalScore);
+  const top1 = sorted[0];
+  const top2 = sorted[1];
+  const gap = top2 ? top1.finalScore - top2.finalScore : Infinity;
+
+  let recommendTier = 'none';
+  if (gap >= 15) recommendTier = 'strong';
+  else if (gap >= 5) recommendTier = 'normal';
+
+  return { noData: false, entries, top1, gap, recommendTier };
 }
 
 // 對所有方向鄉鎮跑一次 P0～P1-2，結果暫存供 console 診斷用
@@ -716,25 +757,18 @@ function findUpcomingSpike(recommend) {
   return null;
 }
 
-// directionAdvisor：CWA 3h 資料 + 生活圈權重 → 推薦/避免方向 + 未來雨勢提醒
-// 無資料鄉鎮不參與排序；全部無資料則回傳空結果
-//
-// 無差別模式：若各地 effectivePop 差距 < 5%，代表系統其實沒有真正的
-// 推薦依據，直接說「各地狀況相近」比硬點一個方向更誠實，避免使用者
-// 誤以為分數平手時的「推薦」有實質意義
+// directionAdvisor：CWA 3h 資料 → 未來雨勢突發提醒 + 各方向明細（給 tip 用）
+// 主卡片的推薦/清單改由 buildWeatherLayerAdvice()（P1-2 finalScore）產生，
+// 這裡只保留 scores（CCTV 校正明細，給收合的 tip 顯示）跟 warning（突發雨提醒）
 function directionAdvisor(townSlots, now) {
   const scores = computeDirectionScores(townSlots, now);
   const withData = scores.filter(s => s.currentPop !== null);
 
   if (withData.length === 0) {
-    return { scores, noData: true, recommendLabel: '', avoidText: '', warning: null, isUniform: false, popList: [], allSamePop: false };
+    return { scores, noData: true, warning: null };
   }
 
-  const effectivePops = withData.map(s => s.effectivePop);
-  const isUniform = (Math.max(...effectivePops) - Math.min(...effectivePops)) < 5;
-
   const recommend = withData.slice(0, 2);
-  const avoid = withData[withData.length - 1];
   const upcoming = findUpcomingSpike(recommend);
 
   let warning = null;
@@ -744,25 +778,7 @@ function directionAdvisor(townSlots, now) {
     warning = `⚠️ 預計 <strong>${pad(upcoming.spike.start.getHours())}:00</strong>，${upcoming.label}降雨率將達 ${upcoming.spike.value}%，建議${deadlineText}出門`;
   }
 
-  // 固定順序（與 CCTV 面板一致），不用分數排序，避免清單每次刷新跳動位置
-  const popList = Object.keys(DIRECTION_WEIGHTS).map(label => {
-    const s = scores.find(sc => sc.label === label);
-    return { label, pop: s?.currentPop ?? null };
-  });
-  const popValues = popList.filter(p => p.pop !== null).map(p => p.pop);
-  const allSamePop = popValues.length > 0 && popValues.every(p => p === popValues[0]);
-
-  return {
-    scores,
-    noData: false,
-    isUniform,
-    recommendLabel: isUniform ? '' : recommend.map(r => r.label).join('／') + '方向',
-    avoidText: (!isUniform && avoid.effectivePop >= 50) ? `🚫 避免：${avoid.label}方向（${avoid.currentPop}%）` : '',
-    popList,
-    allSamePop,
-    uniformPopValue: allSamePop ? popValues[0] : null,
-    warning,
-  };
+  return { scores, noData: false, warning };
 }
 
 // countyData = { 'F-D0047-029': [...chiayi locs], 'F-D0047-025': [...yunlin locs] }
@@ -795,18 +811,41 @@ function updateAiReport(countyData) {
       return;
     }
 
-    recommendEl.textContent = advice.isUniform ? '🟢 各地狀況相近' : `🟢 建議往${advice.recommendLabel}`;
+    // 主卡片改用 P1-2 finalScore（PoP + 天氣文字訊號 + 午後加乘），不是舊的 CCTV 校正分數
+    const wlAdvice = buildWeatherLayerAdvice(now);
 
-    if (advice.allSamePop) {
-      reasonEl.innerHTML = `<div class="ai-poplist-title">目前各地降雨機率皆為 ${advice.uniformPopValue}%</div>`;
+    if (wlAdvice.noData) {
+      recommendEl.textContent = '⚠ 風險分數尚未就緒';
+      recommendEl.style.color = 'var(--muted)';
+      reasonEl.innerHTML = '';
     } else {
-      const rows = advice.popList.map(p =>
-        `<div class="ai-poplist-row"><span class="loc">${p.label}</span><span class="pop">${p.pop !== null ? p.pop + '%' : '—'}</span></div>`
-      ).join('');
-      reasonEl.innerHTML = `<div class="ai-poplist-title">目前各地降雨機率</div><div class="ai-poplist">${rows}</div>`;
+      const scored = wlAdvice.entries.filter(e => e.finalScore !== null);
+      const avgScore = scored.length
+        ? Math.round(scored.reduce((sum, e) => sum + e.finalScore, 0) / scored.length)
+        : null;
+
+      if (wlAdvice.recommendTier === 'strong') {
+        const c = scoreToColor(wlAdvice.top1.finalScore);
+        recommendEl.textContent = `${c.emoji} ${wlAdvice.top1.label} 明顯較佳方向`;
+        recommendEl.style.color = c.css;
+      } else if (wlAdvice.recommendTier === 'normal') {
+        const c = scoreToColor(wlAdvice.top1.finalScore);
+        recommendEl.textContent = `${c.emoji} 建議往${wlAdvice.top1.label}方向`;
+        recommendEl.style.color = c.css;
+      } else {
+        const c = scoreToColor(avgScore);
+        recommendEl.textContent = `${c.emoji} 各方向差異不大`;
+        recommendEl.style.color = c.css;
+      }
+
+      const rows = wlAdvice.entries.map(e => {
+        const c = scoreToColor(e.finalScore);
+        return `<div class="ai-poplist-row"><span class="loc">${c.emoji} ${e.label}</span><span class="pop">${e.finalScore !== null ? e.finalScore : '—'}</span></div>`;
+      }).join('');
+      reasonEl.innerHTML = `<div class="ai-poplist">${rows}</div>`;
     }
 
-    avoidEl.textContent = advice.avoidText;
+    avoidEl.textContent = ''; // 顏色清單已經涵蓋，不再重複一行「避免」文字
     timeEl.innerHTML = advice.warning || '📊 未來 6 小時對流平穩，暫無突發大雨';
 
     const cctvIcons = { dry: ' ☀', unknown: '', wet: ' 💧', raining: ' 🌧' };
