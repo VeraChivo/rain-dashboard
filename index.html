@@ -63,12 +63,17 @@
   .rain-cell{border-radius:6px;font-weight:600;padding:7px 4px;min-width:48px;display:block;margin:0 auto}
 
   .ai-report{background:linear-gradient(135deg,rgba(47,111,237,.07),rgba(124,92,252,.07));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
-  .ai-report-title{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em}
-  .ai-recommend{font-size:1rem;font-weight:700;color:var(--green);margin-bottom:2px}
-  .ai-reason{font-size:.82rem;color:var(--text);line-height:1.6;margin-bottom:6px}
-  .ai-avoid{font-size:.85rem;font-weight:700;color:var(--red);margin-bottom:6px}
+  .ai-report-title{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-align:center}
+  .ai-recommend{font-size:1rem;font-weight:700;color:var(--green);margin-bottom:2px;text-align:center}
+  .ai-reason{font-size:.82rem;color:var(--text);line-height:1.6;margin-bottom:6px;text-align:center}
+  .ai-poplist-title{font-size:.76rem;color:var(--muted);margin-bottom:5px}
+  .ai-poplist{display:flex;flex-direction:column;align-items:center;gap:2px}
+  .ai-poplist-row{display:flex;justify-content:space-between;width:150px;font-family:'JetBrains Mono',monospace;font-size:.85rem}
+  .ai-poplist-row .loc{color:var(--text)}
+  .ai-poplist-row .pop{color:var(--accent);font-weight:700}
+  .ai-avoid{font-size:.85rem;font-weight:700;color:var(--red);margin-bottom:6px;text-align:center}
   .ai-avoid:empty{display:none;margin:0}
-  .ai-time{font-size:.8rem;line-height:1.6;color:var(--text);margin-bottom:6px}
+  .ai-time{font-size:.8rem;line-height:1.6;color:var(--text);margin-bottom:6px;text-align:center}
   .ai-tip{font-size:.78rem}
   .ai-tip summary{cursor:pointer;color:var(--accent);font-weight:600}
   .ai-tip[hidden]{display:none}
@@ -713,13 +718,20 @@ function findUpcomingSpike(recommend) {
 
 // directionAdvisor：CWA 3h 資料 + 生活圈權重 → 推薦/避免方向 + 未來雨勢提醒
 // 無資料鄉鎮不參與排序；全部無資料則回傳空結果
+//
+// 無差別模式：若各地 effectivePop 差距 < 5%，代表系統其實沒有真正的
+// 推薦依據，直接說「各地狀況相近」比硬點一個方向更誠實，避免使用者
+// 誤以為分數平手時的「推薦」有實質意義
 function directionAdvisor(townSlots, now) {
   const scores = computeDirectionScores(townSlots, now);
   const withData = scores.filter(s => s.currentPop !== null);
 
   if (withData.length === 0) {
-    return { scores, noData: true, recommendLabel: '', reasonText: '', avoidText: '', warning: null };
+    return { scores, noData: true, recommendLabel: '', avoidText: '', warning: null, isUniform: false, popList: [], allSamePop: false };
   }
+
+  const effectivePops = withData.map(s => s.effectivePop);
+  const isUniform = (Math.max(...effectivePops) - Math.min(...effectivePops)) < 5;
 
   const recommend = withData.slice(0, 2);
   const avoid = withData[withData.length - 1];
@@ -732,22 +744,23 @@ function directionAdvisor(townSlots, now) {
     warning = `⚠️ 預計 <strong>${pad(upcoming.spike.start.getHours())}:00</strong>，${upcoming.label}降雨率將達 ${upcoming.spike.value}%，建議${deadlineText}出門`;
   }
 
-  function cctvTag(r) {
-    const s = cctvStates[r.label];
-    if (!s || s === 'unknown') return '';
-    const icons = { dry: '☀', wet: '💧', raining: '🌧' };
-    return ` ${icons[s] || ''}`;
-  }
+  // 固定順序（與 CCTV 面板一致），不用分數排序，避免清單每次刷新跳動位置
+  const popList = Object.keys(DIRECTION_WEIGHTS).map(label => {
+    const s = scores.find(sc => sc.label === label);
+    return { label, pop: s?.currentPop ?? null };
+  });
+  const popValues = popList.filter(p => p.pop !== null).map(p => p.pop);
+  const allSamePop = popValues.length > 0 && popValues.every(p => p === popValues[0]);
 
   return {
     scores,
     noData: false,
-    recommendLabel: recommend.map(r => r.label).join('／') + '方向',
-    reasonText: '原因：' + recommend.map(r => {
-      const adj = r.cctvAdj !== 0 ? `→${r.effectivePop}%校正` : '';
-      return `${r.label} ${r.currentPop}%${adj}${cctvTag(r)}`;
-    }).join('　'),
-    avoidText: avoid.effectivePop >= 50 ? `🚫 避免：${avoid.label}方向（${avoid.currentPop}%）` : '',
+    isUniform,
+    recommendLabel: isUniform ? '' : recommend.map(r => r.label).join('／') + '方向',
+    avoidText: (!isUniform && avoid.effectivePop >= 50) ? `🚫 避免：${avoid.label}方向（${avoid.currentPop}%）` : '',
+    popList,
+    allSamePop,
+    uniformPopValue: allSamePop ? popValues[0] : null,
     warning,
   };
 }
@@ -782,8 +795,17 @@ function updateAiReport(countyData) {
       return;
     }
 
-    recommendEl.textContent = `🟢 推薦：${advice.recommendLabel}`;
-    reasonEl.textContent = advice.reasonText;
+    recommendEl.textContent = advice.isUniform ? '🟢 各地狀況相近' : `🟢 建議往${advice.recommendLabel}`;
+
+    if (advice.allSamePop) {
+      reasonEl.innerHTML = `<div class="ai-poplist-title">目前各地降雨機率皆為 ${advice.uniformPopValue}%</div>`;
+    } else {
+      const rows = advice.popList.map(p =>
+        `<div class="ai-poplist-row"><span class="loc">${p.label}</span><span class="pop">${p.pop !== null ? p.pop + '%' : '—'}</span></div>`
+      ).join('');
+      reasonEl.innerHTML = `<div class="ai-poplist-title">目前各地降雨機率</div><div class="ai-poplist">${rows}</div>`;
+    }
+
     avoidEl.textContent = advice.avoidText;
     timeEl.innerHTML = advice.warning || '📊 未來 6 小時對流平穩，暫無突發大雨';
 
