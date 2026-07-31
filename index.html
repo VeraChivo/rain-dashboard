@@ -531,6 +531,28 @@ function buildRiskTimeline(raw, weatherEntries) {
   });
 }
 
+// ═══════════════════════════════════════════════════════════════
+// P1-3a：分數 → 顏色
+// P1-3b：分數 → 行動文字（媽媽語）
+// 純函式，不寫入 cachedWeatherLayers；只在需要顯示時呼叫
+// 目前只接到 debug 面板，尚未接到正式的「今日出門建議」卡片
+// ═══════════════════════════════════════════════════════════════
+function scoreToColor(score) {
+  if (score === null || score === undefined) return { emoji: '⚪', label: '無資料' };
+  if (score >= 80) return { emoji: '🟢', label: '綠' };
+  if (score >= 60) return { emoji: '🟡', label: '黃' };
+  if (score >= 40) return { emoji: '🟠', label: '橘' };
+  return { emoji: '🔴', label: '紅' };
+}
+
+function scoreToActionText(score) {
+  if (score === null || score === undefined) return '尚無資料，請稍後再看';
+  if (score >= 80) return '天氣穩定，不用擔心';
+  if (score >= 60) return '可以出門，抓準時間';
+  if (score >= 40) return '附近活動較適合，準備躲好';
+  return '在家吧！去哪躲';
+}
+
 // 對所有方向鄉鎮跑一次 P0～P1-2，結果暫存供 console 診斷用
 // 不接入 UI、不接入現有出門建議卡；fetchAll 每次刷新會靜默重算
 let cachedWeatherLayers = {};
@@ -626,18 +648,20 @@ function renderDebugWeatherPanel() {
     if (r0) {
       if (r0.risk) {
         const rk = r0.risk;
+        const c = scoreToColor(rk.finalScore);
         lines.push(`     risk: PoP=${r0.pop}% base=${rk.base} weatherDeduct=-${rk.weatherDeduct} timeDeduct=-${rk.timeDeduct} → finalScore=${rk.finalScore}`);
+        lines.push(`     ${c.emoji} ${c.label}燈｜「${scoreToActionText(rk.finalScore)}」`);
       } else {
         lines.push('     risk: （PoP 無資料，不計分）');
       }
     }
 
-    // P1-1.5／P1-2 驗證：把未來 8 格（24h）的訊號與風險分攤開看
+    // P1-1.5／P1-2／P1-3 驗證：把未來 8 格（24h）的訊號、風險分、燈號攤開看
     // 只留一個最終 signal，若整理前有多個 candidates 會額外標註 *
     const upcoming = (layer.weather || []).slice(0, 8);
     const upcomingRisk = (layer.risk || []).slice(0, 8);
     if (upcoming.length > 1) {
-      lines.push('  未來 24h 訊號＋風險分（* = 整理前有多個候選）:');
+      lines.push('  未來 24h 訊號＋風險分＋燈號（* = 整理前有多個候選）:');
       upcoming.forEach((w, i) => {
         const rk = upcomingRisk[i]?.risk;
         const hh = w.start ? `${String(w.start.getHours()).padStart(2,'0')}:00` : '--:--';
@@ -645,7 +669,8 @@ function renderDebugWeatherPanel() {
         const sig = w.signal ? w.signal.level : '-';
         const multi = (w.signalCandidates?.length > 1) ? '*' : '';
         const scoreStr = rk ? `${rk.finalScore}分` : '—';
-        lines.push(`    ${hh}${isAfternoon ? '☼' : ' '} [${sig}]${multi}  ${scoreStr}`);
+        const c = scoreToColor(rk?.finalScore);
+        lines.push(`    ${hh}${isAfternoon ? '☼' : ' '} [${sig}]${multi}  ${scoreStr}  ${c.emoji}`);
       });
     }
     lines.push('');
