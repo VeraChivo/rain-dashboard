@@ -429,6 +429,65 @@ window.inspectWeatherLayer = function(label) {
   return label ? cachedWeatherLayers[label] : cachedWeatherLayers;
 };
 
+// ─────────────────────────────────────────────────────────────
+// 手機用 P0 診斷面板：加 ?debug=weather 網址參數才會顯示
+// 一般使用者（無此參數）完全不受影響、不佔用任何渲染成本
+// 目的：核對 CWA 真實 ElementName 是否跟 WEATHER_ELEMENT_NAMES 猜測相符
+// 這是暫時工具，等 schema 確認完成、P1 上線後即可整段移除
+// ─────────────────────────────────────────────────────────────
+function isDebugWeatherMode() {
+  try { return new URLSearchParams(location.search).get('debug') === 'weather'; }
+  catch (_) { return false; }
+}
+
+function renderDebugWeatherPanel() {
+  if (!isDebugWeatherMode()) return;
+
+  let panel = document.getElementById('debugWeatherPanel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'debugWeatherPanel';
+    panel.style.cssText = 'background:#0d1117;color:#3fb950;font-family:monospace;'
+      + 'font-size:12px;line-height:1.7;padding:14px;margin:12px;border-radius:10px;'
+      + 'white-space:pre-wrap;word-break:break-all;overflow-x:auto;border:1px solid #30363d';
+    document.body.insertBefore(panel, document.body.firstChild);
+  }
+
+  const lines = ['═══ P0 Weather Layer 診斷 ═══', ''];
+  for (const [label, cfg] of Object.entries(DIRECTION_TOWNS)) {
+    const layer = cachedWeatherLayers[label];
+    lines.push(`── ${label}（${cfg.town} / ${cfg.dataset}）`);
+
+    if (!layer || !layer.raw) {
+      lines.push('  ⚠ 找不到此鄉鎮，或尚未載入資料');
+      lines.push('');
+      continue;
+    }
+
+    lines.push('  實際 ElementName 清單:');
+    lines.push('  ' + JSON.stringify(layer.raw._rawWeatherElementNames));
+    lines.push('');
+
+    for (const key of Object.keys(WEATHER_ELEMENT_NAMES)) {
+      const found = layer.raw[key] !== null;
+      const meta = layer.metadata[key];
+      const metaStr = meta
+        ? ` [${meta.count}筆／每${meta.intervalHours}h／key=${meta.valueKey}]`
+        : '';
+      lines.push(`  ${found ? '✅' : '❌'} ${key}（猜測:"${WEATHER_ELEMENT_NAMES[key]}"）${metaStr}`);
+    }
+
+    const w0 = layer.weather?.[0];
+    if (w0) {
+      lines.push(`  → weather[0]: source=${w0.source} confidence=${w0.confidence}`);
+      lines.push(`     text="${(w0.text || '').slice(0, 60)}"`);
+    }
+    lines.push('');
+  }
+
+  panel.textContent = lines.join('\n');
+}
+
 // 未來 N 小時（不含目前這一格）
 function getNearFutureSlots(slots, now, hoursAhead) {
   return slots.filter(s => s.start >= now).slice(0, hoursAhead);
@@ -859,6 +918,7 @@ async function fetchAll() {
   }
 
   updateAiReport(cachedCountyData);
+  renderDebugWeatherPanel();
 
   setLoading(false);
 }
