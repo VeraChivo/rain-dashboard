@@ -482,8 +482,57 @@ function buildWeatherLayer(rawFields) {
   }]);
 }
 
-// 對所有方向鄉鎮跑一次 P0 三層，結果暫存供 console 診斷用
-// 不接入 UI、不接入評分；fetchAll 每次刷新會靜默重算
+// ═══════════════════════════════════════════════════════════════
+// P1-2：Risk Modifier — 把 P1-1.5 整理過的單一訊號轉成風險分數
+// 公式：
+//   base          = 100 - PoP
+//   weatherDeduct = signal.deduct（thunder=10／severe=15／rain=5／stable=-5／neutral=0）
+//   timeDeduct    = 午後(12~18時) 且訊號屬於 thunder/severe 時，額外再扣一次同量
+//                   （模擬午後對流雷雨比同樣訊號在其他時段風險更高）
+//   finalScore    = base − weatherDeduct − timeDeduct，夾在 0~100 之間
+// 沒有 PoP 的時段回傳 null，不當 0 分——延續 P0 之前定的「無資料不可轉 0%」原則
+// signal 缺席（Unknown/無文字）時 weatherDeduct=timeDeduct=0，
+// 會自然退化成純 PoP 分數，等同目前主表的邏輯，不會比舊系統更差
+// ═══════════════════════════════════════════════════════════════
+const RISK_LEVELS = ['thunder', 'severe']; // 只有這兩級會觸發午後加乘
+
+function computeWeatherRiskScore(pop, signal, timeFlags) {
+  if (pop === null || pop === undefined || isNaN(pop)) return null;
+
+  const base = 100 - pop;
+  const weatherDeduct = signal?.deduct ?? 0;
+  const isAfternoon = timeFlags?.includes('afternoon');
+  const isRiskLevel = signal && RISK_LEVELS.includes(signal.level);
+  const timeDeduct = (isAfternoon && isRiskLevel) ? weatherDeduct : 0;
+
+  const rawScore = base - weatherDeduct - timeDeduct;
+  const finalScore = Math.max(0, Math.min(100, rawScore));
+
+  return { base, weatherDeduct, timeDeduct, finalScore };
+}
+
+// 把 PoP 時間軸與訊號時間軸配對——用 start 時間比對，不假設陣列順序一致
+// （P0 已確認兩者同為 3h／同筆數／同軸，但比對時間戳記比信任陣列順序更保險）
+function buildRiskTimeline(raw, weatherEntries) {
+  const popEntries = raw?.ProbabilityOfPrecipitation?.time || [];
+  return (weatherEntries || []).map(w => {
+    const popEntry = popEntries.find(p => p.start?.getTime() === w.start?.getTime());
+    const popVal = popEntry ? parseInt(popEntry.raw?.ProbabilityOfPrecipitation) : NaN;
+    const pop = isNaN(popVal) ? null : popVal;
+    return {
+      start: w.start,
+      end: w.end,
+      pop,
+      text: w.text,
+      signalLevel: w.signal?.level ?? 'unknown',
+      timeFlags: w.timeFlags,
+      risk: computeWeatherRiskScore(pop, w.signal, w.timeFlags), // null = 無資料，不參與排序
+    };
+  });
+}
+
+// 對所有方向鄉鎮跑一次 P0～P1-2，結果暫存供 console 診斷用
+// 不接入 UI、不接入現有出門建議卡；fetchAll 每次刷新會靜默重算
 let cachedWeatherLayers = {};
 
 function buildAllWeatherLayers(countyData) {
@@ -491,12 +540,14 @@ function buildAllWeatherLayers(countyData) {
   for (const [label, cfg] of Object.entries(DIRECTION_TOWNS)) {
     const locs = countyData?.[cfg.dataset] || [];
     const raw = parseRawWeatherElements(locs, cfg.town);
+    const weather = buildWeatherLayer(raw);
     result[label] = {
       raw,
       metadata: raw
         ? Object.fromEntries(Object.keys(WEATHER_ELEMENT_NAMES).map(k => [k, inspectMetadata(raw[k])]))
         : null,
-      weather: buildWeatherLayer(raw),
+      weather,
+      risk: raw ? buildRiskTimeline(raw, weather) : null,
     };
   }
   return result;
@@ -558,6 +609,7 @@ function renderDebugWeatherPanel() {
     }
 
     const w0 = layer.weather?.[0];
+    const r0 = layer.risk?.[0];
     if (w0) {
       const flagStr = w0.timeFlags?.length ? w0.timeFlags.join(',') : '-';
       lines.push(`  → weather[0]: source=${w0.source} confidence=${w0.confidence} timeFlags=[${flagStr}]`);
@@ -571,19 +623,30 @@ function renderDebugWeatherPanel() {
         lines.push(`     candidates（整理前，供稽核）: [${candStr}]`);
       }
     }
+    if (r0) {
+      if (r0.risk) {
+        const rk = r0.risk;
+        lines.push(`     risk: PoP=${r0.pop}% base=${rk.base} weatherDeduct=-${rk.weatherDeduct} timeDeduct=-${rk.timeDeduct} → finalScore=${rk.finalScore}`);
+      } else {
+        lines.push('     risk: （PoP 無資料，不計分）');
+      }
+    }
 
-    // P1-1.5 驗證：把未來 8 格（24h）的訊號攤開看，確認優先序整理有沒有正確
+    // P1-1.5／P1-2 驗證：把未來 8 格（24h）的訊號與風險分攤開看
     // 只留一個最終 signal，若整理前有多個 candidates 會額外標註 *
     const upcoming = (layer.weather || []).slice(0, 8);
+    const upcomingRisk = (layer.risk || []).slice(0, 8);
     if (upcoming.length > 1) {
-      lines.push('  未來 24h 訊號掃描（最終 signal，* = 整理前有多個候選）:');
-      for (const w of upcoming) {
+      lines.push('  未來 24h 訊號＋風險分（* = 整理前有多個候選）:');
+      upcoming.forEach((w, i) => {
+        const rk = upcomingRisk[i]?.risk;
         const hh = w.start ? `${String(w.start.getHours()).padStart(2,'0')}:00` : '--:--';
         const isAfternoon = w.timeFlags?.includes('afternoon');
         const sig = w.signal ? w.signal.level : '-';
         const multi = (w.signalCandidates?.length > 1) ? '*' : '';
-        lines.push(`    ${hh}${isAfternoon ? '☼' : ' '} [${sig}]${multi}`);
-      }
+        const scoreStr = rk ? `${rk.finalScore}分` : '—';
+        lines.push(`    ${hh}${isAfternoon ? '☼' : ' '} [${sig}]${multi}  ${scoreStr}`);
+      });
     }
     lines.push('');
   }
