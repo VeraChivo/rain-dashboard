@@ -88,6 +88,7 @@
   .alert-row:last-child{margin-bottom:0}
   .alert-time{font-size:.78rem;font-weight:700;color:var(--text);text-align:center;margin-bottom:2px}
   .alert-text{font-size:.78rem;color:var(--muted);line-height:1.6;text-align:center}
+  .alert-advice{font-size:.74rem;color:var(--accent);line-height:1.5;text-align:center;margin-top:2px}
 
   /* CCTV 即時校正區 */
   .cctv-section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
@@ -742,32 +743,21 @@ function computeDayBuckets(now) {
   return buckets;
 }
 
-// ⏰ 時段提醒用：多地點合併 + 替代方向建議
-// 避免「15點會下雨」這種確定語氣（資料是風險推估，不是降雨實況）
-function bucketAlertText(summary) {
-  if (!summary || summary.risky.length === 0) return null;
-  const riskyNames = summary.risky.map(e => e.label).join('、');
-  const kind = riskKindLabel(summary.worstLevel);
-  let text = `${riskyNames}${kind}風險增加`;
-  if (summary.safe.length > 0) {
-    const safeNames = summary.safe.map(e => e.label).join('、');
-    text += `，若要外出可優先考慮${safeNames}方向`;
-  }
-  return text;
-}
-
 // ① AI 行程建議用：跟上面同一份資料，語氣更接近一句自然的行程安排
+// 風險子句補上「幾點後」的精確起始時間（用該時段內最早出現風險的格），
+// 不再只寫「下午」這種模糊範圍
 function bucketNarrativeClause(bucketLabel, summary) {
   if (!summary) return null;
   if (summary.risky.length === 0) {
     return `${bucketLabel}各地天氣穩定，適合安排外出`;
   }
+  const onsetHour = Math.min(...summary.risky.map(e => e.startHour));
   const riskyNames = summary.risky.map(e => e.label).join('、');
   const kind = riskKindLabel(summary.worstLevel);
-  let clause = `${bucketLabel}${riskyNames}${kind}風險增加`;
+  let clause = `${bucketLabel}${pad(onsetHour)}:00後${riskyNames}${kind}風險增加`;
   if (summary.safe.length > 0) {
     const safeNames = summary.safe.map(e => e.label).join('、');
-    clause += `，優先考慮${safeNames}方向`;
+    clause += `，若要外出可優先考慮${safeNames}方向`;
   }
   return clause;
 }
@@ -863,22 +853,114 @@ function renderRankList(wlAdvice, buckets) {
   listEl.innerHTML = rows.join('');
 }
 
-// ③ 渲染：今日注意時段（結構化版本，跟①用同一份 buckets，不會互相矛盾）
-function renderAlertList(buckets) {
+// ═══════════════════════════════════════════════════════════════
+// P1-6：時段合併 — ③ 今日注意時段改用「連續風險格合併」而非固定的
+// 上午/下午/晚上標籤，才能給精確的「幾點到幾點」而不是模糊的「下午」
+// 規則：
+//   只有一格有風險 → 只講「幾點左右」，不假裝知道結束時間
+//   連續多格風險方向相同 → 合併成「起～迄」區間，並附上下一格何時趨緩
+// ═══════════════════════════════════════════════════════════════
+
+// 用任一方向的 risk 陣列取得「今天剩餘」的完整時間格（所有方向共用同一時間軸，P0 已驗證）
+function getTodayRemainingSlotTimes(now) {
+  const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+  const anyLabel = Object.keys(DIRECTION_WEIGHTS).find(l => cachedWeatherLayers[l]?.risk?.length);
+  if (!anyLabel) return [];
+  return cachedWeatherLayers[anyLabel].risk
+    .filter(r => r.start && r.end
+      && r.end > now
+      && `${r.start.getFullYear()}-${r.start.getMonth()}-${r.start.getDate()}` === todayKey)
+    .map(r => r.start);
+}
+
+// 某一格裡，哪些方向有風險、最壞訊號是什麼
+function slotRiskInfo(slotStart) {
+  const risky = [];
+  let worstLevel = null;
+  for (const label of Object.keys(DIRECTION_WEIGHTS)) {
+    const risk = cachedWeatherLayers[label]?.risk || [];
+    const entry = risk.find(r => r.start && r.start.getTime() === slotStart.getTime());
+    if (!entry || !RISKY_SIGNAL_LEVELS.includes(entry.signalLevel)) continue;
+    risky.push(label);
+    const rank = SIGNAL_PRIORITY.indexOf(entry.signalLevel);
+    const worstRank = worstLevel ? SIGNAL_PRIORITY.indexOf(worstLevel) : Infinity;
+    if (rank < worstRank) worstLevel = entry.signalLevel;
+  }
+  return { risky, worstLevel };
+}
+
+// 把「風險方向組合完全相同」的連續格合併成一個時段區間
+function computeRiskPeriods(now) {
+  const slotTimes = getTodayRemainingSlotTimes(now);
+  const raw = [];
+  let current = null;
+
+  slotTimes.forEach((start, i) => {
+    const { risky, worstLevel } = slotRiskInfo(start);
+    if (risky.length === 0) { current = null; return; }
+    const key = risky.slice().sort().join(',');
+    if (current && current.key === key && current.lastIndex === i - 1) {
+      current.slots.push(start);
+      current.lastIndex = i;
+    } else {
+      current = { key, risky, worstLevel, slots: [start], lastIndex: i };
+      raw.push(current);
+    }
+  });
+
+  return raw.map(p => ({
+    risky: p.risky,
+    worstLevel: p.worstLevel,
+    firstSlot: p.slots[0],
+    lastSlot: p.slots[p.slots.length - 1],
+    isSingle: p.slots.length === 1,
+    nextSlotTime: slotTimes[p.lastIndex + 1] || null,
+  }));
+}
+
+// 單一格：只講「幾點左右」，不硬寫結束時間
+// 連續多格：合併成「起～迄」區間，並附上下一格（若有資料）何時趨緩
+function periodAlertText(period) {
+  const names = period.risky.join('、');
+  const kind = riskKindLabel(period.worstLevel);
+  const firstLabel = `${pad(period.firstSlot.getHours())}:00`;
+
+  if (period.isSingle) {
+    return {
+      timeLabel: `${firstLabel}左右`,
+      text: `${names}可能出現${kind}`,
+      advice: `建議${firstLabel}前完成戶外行程`,
+    };
+  }
+
+  const lastLabel = `${pad(period.lastSlot.getHours())}:00`;
+  const recoverLabel = period.nextSlotTime ? `${pad(period.nextSlotTime.getHours())}:00` : null;
+  const advice = `戶外活動建議在${firstLabel}前完成`
+    + (recoverLabel ? `，${recoverLabel}後趨緩，可再視天氣調整` : '');
+
+  return { timeLabel: `${firstLabel}～${lastLabel}`, text: `${names}${kind}機率增加`, advice };
+}
+
+// ③ 渲染：今日注意時段（精確時段版本，跟①②用不同粒度的同一份底層資料）
+function renderAlertList(now) {
   const listEl = document.getElementById('alertList');
   if (!listEl) return;
 
-  const rows = buckets
-    .map(b => {
-      const text = bucketAlertText(b.summary);
-      if (!text) return null;
-      return `<div class="alert-row"><div class="alert-time">${b.label} ${b.rangeLabel}</div><div class="alert-text">${text}</div></div>`;
-    })
-    .filter(Boolean);
+  const periods = computeRiskPeriods(now);
 
-  listEl.innerHTML = rows.length
-    ? rows.join('')
-    : '<div class="alert-text">今天暫無明顯雨勢時段，天氣宜人，適合安排外出。</div>';
+  if (periods.length === 0) {
+    listEl.innerHTML = '<div class="alert-text">今天暫無明顯雨勢時段，天氣宜人，適合安排外出。</div>';
+    return;
+  }
+
+  listEl.innerHTML = periods.map(p => {
+    const { timeLabel, text, advice } = periodAlertText(p);
+    return `<div class="alert-row">
+      <div class="alert-time">${timeLabel}</div>
+      <div class="alert-text">${text}</div>
+      <div class="alert-advice">${advice}</div>
+    </div>`;
+  }).join('');
 }
 
 // 對所有方向鄉鎮跑一次 P0～P1-2，結果暫存供 console 診斷用
@@ -1069,7 +1151,7 @@ function updateAiReport(countyData) {
 
     renderItineraryText(buckets);
     renderRankList(wlAdvice, buckets);
-    renderAlertList(buckets);
+    renderAlertList(now);
 
     // 雨胞移動方向卡片沿用同一批 CCTV 校正過的 scores
     const rainVec = calcRainVector(cachedWindStations);
