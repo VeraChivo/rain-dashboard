@@ -75,14 +75,15 @@
   .ai-avoid{font-size:.85rem;font-weight:700;color:var(--red);margin-bottom:6px;text-align:center}
   .ai-avoid:empty{display:none;margin:0}
   .ai-time{font-size:.8rem;line-height:1.6;color:var(--text);margin-bottom:6px;text-align:center}
-  .ai-tip{font-size:.78rem}
+  .ai-tip{font-size:.78rem;text-align:center}
   .ai-tip summary{cursor:pointer;color:var(--accent);font-weight:600}
   .ai-tip[hidden]{display:none}
   .ai-tip div{margin-top:6px;line-height:1.8;color:var(--text);font-family:'JetBrains Mono',monospace}
 
   /* CCTV 即時校正區 */
   .cctv-section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
-  .cctv-section-title{font-size:.82rem;font-weight:700;color:var(--accent2);margin-bottom:6px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em}
+  .cctv-section-title{font-size:.82rem;font-weight:700;color:var(--accent2);margin-bottom:6px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;cursor:pointer}
+  .cctv-body{margin-top:8px}
   .cctv-note{font-size:.72rem;color:var(--muted);margin-bottom:10px;line-height:1.5}
   .cctv-row{display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap}
   .cctv-loc{font-size:.8rem;font-weight:700;color:var(--text);min-width:28px;font-family:'JetBrains Mono',monospace}
@@ -162,17 +163,19 @@
 </details>
 
 <!-- 📷 CCTV 現況確認（手動設定，作為預報與現況的交叉比對；不影響上方出門建議分數） -->
-<div class="cctv-section">
-  <div class="cctv-section-title">📷 現況確認</div>
-  <div class="cctv-note">請對照 CCTV 設定各方向現況，僅供參考、不影響上方「今天出門去哪兒」的分數</div>
-  <div id="cctvGrid"></div>
-  <div class="cctv-links">
-    快速查看監視器：
-    <a href="https://1968.freeway.gov.tw/" target="_blank">🛣 國道監視器</a>
-    <a href="https://www.mvdis.gov.tw/m3-emv-1968/cctv/index" target="_blank">🏞 省道監視器</a>
+<details class="cctv-section">
+  <summary class="cctv-section-title">📷 現況確認</summary>
+  <div class="cctv-body">
+    <div class="cctv-note">請對照 CCTV 設定各方向現況，僅供參考、不影響上方「今天出門去哪兒」的分數</div>
+    <div id="cctvGrid"></div>
+    <div class="cctv-links">
+      快速查看監視器：
+      <a href="https://1968.freeway.gov.tw/" target="_blank">🛣 國道監視器</a>
+      <a href="https://www.mvdis.gov.tw/m3-emv-1968/cctv/index" target="_blank">🏞 省道監視器</a>
+    </div>
+    <div class="cctv-weight-note">* CCTV 為單點量測，僅供參考；夜間或鏡頭不清晰時建議設「不確定」</div>
   </div>
-  <div class="cctv-weight-note">* CCTV 為單點量測，僅供參考；夜間或鏡頭不清晰時建議設「不確定」</div>
-</div>
+</details>
 
 <!-- 📡 雷達回波：目前圖片常無法載入（CORS/防盜連），先收合避免佔版面 -->
 <details class="radar-section">
@@ -648,9 +651,11 @@ const RAIN_TIMELINE_BUCKETS = [
   { key: 'evening',   label: '晚上', hours: [18, 21] },
 ];
 
+// 除了「最壞訊號等級」，也記住是哪個方向、幾點、分數多少，
+// 這樣文字才能講出「哪裡、幾點、幾分」而不是只說「部分地區」
 function summarizeBucket(bucketHours, now) {
   const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
-  let worstSignalLevel = null;
+  let worst = null; // { label, signalLevel, finalScore, startHour }
   const scores = [];
   let anyData = false;
 
@@ -662,11 +667,16 @@ function summarizeBucket(bucketHours, now) {
       if (dayKey !== todayKey || !bucketHours.includes(r.start.getHours())) continue;
 
       anyData = true;
-      if (r.risk) scores.push(r.risk.finalScore);
+      const finalScore = r.risk ? r.risk.finalScore : null;
+      if (finalScore !== null) scores.push(finalScore);
+
       if (r.signalLevel && r.signalLevel !== 'unknown') {
-        if (worstSignalLevel === null
-          || SIGNAL_PRIORITY.indexOf(r.signalLevel) < SIGNAL_PRIORITY.indexOf(worstSignalLevel)) {
-          worstSignalLevel = r.signalLevel;
+        const rank = SIGNAL_PRIORITY.indexOf(r.signalLevel);
+        const worstRank = worst ? SIGNAL_PRIORITY.indexOf(worst.signalLevel) : Infinity;
+        const higherRisk = rank < worstRank;
+        const sameRiskWorseScore = rank === worstRank && finalScore !== null && worst.finalScore !== null && finalScore < worst.finalScore;
+        if (higherRisk || sameRiskWorseScore) {
+          worst = { label, signalLevel: r.signalLevel, finalScore, startHour: r.start.getHours() };
         }
       }
     }
@@ -674,18 +684,28 @@ function summarizeBucket(bucketHours, now) {
 
   if (!anyData) return null;
   const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
-  return { worstSignalLevel, avgScore };
+  return { worst, avgScore };
 }
 
+// 有風險時具體講「哪裡、幾點、幾分」，並給出門/收假的截止時間；
+// 避免用「15點會下雨」這種確定語氣（資料是風險推估，不是降雨實況）
 function bucketToText(summary) {
   if (!summary) return '尚無資料。';
-  switch (summary.worstSignalLevel) {
-    case 'severe':  return '部分地區有大雨或強陣風可能，不建議外出。';
-    case 'thunder': return '部分地區有雷陣雨可能，外出建議攜帶雨具。';
-    case 'rain':    return '部分地區可能有短暫陣雨，備好雨具較保險。';
-    case 'stable':  return '天氣穩定，適合外出。';
-    default:        return '各方向大致平穩，適合外出。';
+  const { worst, avgScore } = summary;
+  const level = worst?.signalLevel;
+
+  if (level === 'severe' || level === 'thunder') {
+    const deadline = `${pad(worst.startHour)}:00`;
+    const scoreStr = worst.finalScore !== null ? `（風險分約 ${worst.finalScore} 分）` : '';
+    const kind = level === 'severe' ? '大雨或強陣風' : '雷陣雨';
+    return `${worst.label}方向風險較高，可能有${kind}${scoreStr}，建議 ${deadline} 前出門或返回室內。`;
   }
+  if (level === 'rain') {
+    const scoreStr = worst.finalScore !== null ? `（風險分約 ${worst.finalScore} 分）` : '';
+    return `${worst.label}方向可能有短暫陣雨${scoreStr}，備好雨具較保險。`;
+  }
+  if (level === 'stable') return '天氣穩定，適合外出。';
+  return avgScore !== null ? `各方向大致平穩（約 ${avgScore} 分），適合外出。` : '各方向大致平穩，適合外出。';
 }
 
 // 只顯示「還沒完全過去」的時段（該時段最後一格結束時間 > 現在）
@@ -714,11 +734,10 @@ function renderRainTimeline(now) {
   }
 
   if (buckets.length > 1) {
-    const allSafe = buckets.every(b =>
-      b.summary.worstSignalLevel === null
-      || b.summary.worstSignalLevel === 'stable'
-      || b.summary.worstSignalLevel === 'neutral'
-    );
+    const allSafe = buckets.every(b => {
+      const lvl = b.summary.worst?.signalLevel;
+      return !lvl || lvl === 'stable' || lvl === 'neutral';
+    });
     if (allSafe) {
       body.innerHTML = '<div class="timeline-text">今日雨勢影響較低，各時段皆可安排外出。</div>';
       return;
@@ -726,7 +745,9 @@ function renderRainTimeline(now) {
 
     const allRisky = buckets.every(b => b.summary.avgScore !== null && b.summary.avgScore < 40);
     if (allRisky) {
-      body.innerHTML = '<div class="timeline-text">今日降雨訊號較頻繁，建議安排室內活動。</div>';
+      // 全天都不安全時，也要具體講「哪裡、幾點前」，不是只給籠統警告
+      const earliest = buckets[0];
+      body.innerHTML = `<div class="timeline-text">今日降雨訊號較頻繁，建議安排室內活動。${bucketToText(earliest.summary)}</div>`;
       return;
     }
   }
@@ -962,6 +983,9 @@ function updateAiReport(countyData) {
       const avgScore = scored.length
         ? Math.round(scored.reduce((sum, e) => sum + e.finalScore, 0) / scored.length)
         : null;
+      // 分數完全相同時，逐一列出七個一樣的數字沒有資訊量，改為省略清單、
+      // 直接把這個共同數字放進標題裡，資訊不會因為省略清單而消失
+      const allSameScore = scored.length > 1 && scored.every(e => e.finalScore === scored[0].finalScore);
 
       if (wlAdvice.recommendTier === 'strong') {
         const c = scoreToColor(wlAdvice.top1.finalScore);
@@ -973,12 +997,11 @@ function updateAiReport(countyData) {
         recommendEl.style.color = c.css;
       } else {
         const c = scoreToColor(avgScore);
-        recommendEl.textContent = `${c.emoji} 各方向差異不大`;
+        recommendEl.textContent = allSameScore
+          ? `${c.emoji} 各方向差異不大，皆為 ${scored[0].finalScore} 分`
+          : `${c.emoji} 各方向差異不大`;
         recommendEl.style.color = c.css;
       }
-
-      // 分數完全相同時，逐一列出七個一樣的數字沒有資訊量，直接省略清單
-      const allSameScore = scored.length > 1 && scored.every(e => e.finalScore === scored[0].finalScore);
       if (allSameScore) {
         reasonEl.innerHTML = '';
       } else {
