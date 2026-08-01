@@ -110,6 +110,13 @@
   .rmv-route{font-size:.82rem;color:var(--text);margin-bottom:5px;padding-left:2px;line-height:1.5}
   .rmv-note{font-size:.7rem;color:var(--muted);display:block;padding-left:14px}
   .rmv-time{font-size:.7rem;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:8px}
+  /* 今天雨勢提醒（文字化時段） */
+  .timeline-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
+  .timeline-title{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-align:center}
+  .timeline-row{margin-bottom:10px}
+  .timeline-row:last-child{margin-bottom:0}
+  .timeline-time{font-size:.8rem;font-weight:700;color:var(--text);margin-bottom:2px}
+  .timeline-text{font-size:.8rem;color:var(--muted);line-height:1.6}
 </style>
 </head>
 <body>
@@ -137,6 +144,12 @@
     <summary>查看各方向即時降雨率</summary>
     <div id="ai-tip"></div>
   </details>
+</div>
+
+<!-- ⏰ 今天雨勢提醒：把逐3h的訊號＋分數依上午/下午/晚上文字化，不做視覺時間軸 -->
+<div class="timeline-card">
+  <div class="timeline-title">⏰ 今天雨勢提醒</div>
+  <div id="rainTimelineBody">載入中…</div>
 </div>
 
 <!-- 🌬 雨胞移動方向（風向推算）：告訴你雨往哪邊走、哪個方向最安全 -->
@@ -599,6 +612,81 @@ function buildWeatherLayerAdvice(now) {
   return { noData: false, entries, top1, gap, recommendTier };
 }
 
+// ═══════════════════════════════════════════════════════════════
+// P1-4：文字決策層 — 把逐3h的訊號＋分數依「上午/下午/晚上」文字化
+// 不做視覺時間軸；資料已經足夠（signal + finalScore），直接翻成一句話
+// 每個時段取「全部方向中最壞的訊號」代表整體風險，而不是逐方向列出
+// （逐方向的比較已經在上面的顏色清單，這裡只回答「幾點要注意」）
+// ═══════════════════════════════════════════════════════════════
+const RAIN_TIMELINE_BUCKETS = [
+  { key: 'morning',   label: '上午', hours: [9] },
+  { key: 'afternoon', label: '下午', hours: [12, 15] },
+  { key: 'evening',   label: '晚上', hours: [18, 21] },
+];
+
+function summarizeBucket(bucketHours, now) {
+  const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+  let worstSignalLevel = null;
+  const scores = [];
+  let anyData = false;
+
+  for (const label of Object.keys(DIRECTION_WEIGHTS)) {
+    const risk = cachedWeatherLayers[label]?.risk || [];
+    for (const r of risk) {
+      if (!r.start) continue;
+      const dayKey = `${r.start.getFullYear()}-${r.start.getMonth()}-${r.start.getDate()}`;
+      if (dayKey !== todayKey || !bucketHours.includes(r.start.getHours())) continue;
+
+      anyData = true;
+      if (r.risk) scores.push(r.risk.finalScore);
+      if (r.signalLevel && r.signalLevel !== 'unknown') {
+        if (worstSignalLevel === null
+          || SIGNAL_PRIORITY.indexOf(r.signalLevel) < SIGNAL_PRIORITY.indexOf(worstSignalLevel)) {
+          worstSignalLevel = r.signalLevel;
+        }
+      }
+    }
+  }
+
+  if (!anyData) return null;
+  const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+  return { worstSignalLevel, avgScore };
+}
+
+function bucketToText(summary) {
+  if (!summary) return '尚無資料。';
+  switch (summary.worstSignalLevel) {
+    case 'severe':  return '部分地區有大雨或強陣風可能，不建議外出。';
+    case 'thunder': return '部分地區有雷陣雨可能，外出建議攜帶雨具。';
+    case 'rain':    return '部分地區可能有短暫陣雨，備好雨具較保險。';
+    case 'stable':  return '天氣穩定，適合外出。';
+    default:        return '各方向大致平穩，適合外出。';
+  }
+}
+
+// 只顯示「還沒完全過去」的時段（該時段最後一格結束時間 > 現在）
+function renderRainTimeline(now) {
+  const body = document.getElementById('rainTimelineBody');
+  if (!body) return;
+
+  const rows = [];
+  for (const bucket of RAIN_TIMELINE_BUCKETS) {
+    const firstH = Math.min(...bucket.hours);
+    const lastH = Math.max(...bucket.hours);
+    if (lastH + 3 <= now.getHours()) continue; // 這個時段已經完全過去
+
+    const summary = summarizeBucket(bucket.hours, now);
+    if (!summary) continue;
+
+    const rangeLabel = `${bucket.label} ${pad(firstH)}:00～${pad(lastH + 3)}:00`;
+    rows.push({ rangeLabel, text: bucketToText(summary) });
+  }
+
+  body.innerHTML = rows.length
+    ? rows.map(r => `<div class="timeline-row"><div class="timeline-time">${r.rangeLabel}</div><div class="timeline-text">${r.text}</div></div>`).join('')
+    : '<div class="timeline-text">今日時段已結束，請於明日重新查看。</div>';
+}
+
 // 對所有方向鄉鎮跑一次 P0～P1-2，結果暫存供 console 診斷用
 // 不接入 UI、不接入現有出門建議卡；fetchAll 每次刷新會靜默重算
 let cachedWeatherLayers = {};
@@ -808,11 +896,13 @@ function updateAiReport(countyData) {
       timeEl.textContent = '';
       tipWrap.hidden = true;
       updateRainMovementCard(calcRainVector(cachedWindStations), []);
+      renderRainTimeline(now);
       return;
     }
 
     // 主卡片改用 P1-2 finalScore（PoP + 天氣文字訊號 + 午後加乘），不是舊的 CCTV 校正分數
     const wlAdvice = buildWeatherLayerAdvice(now);
+    renderRainTimeline(now);
 
     if (wlAdvice.noData) {
       recommendEl.textContent = '⚠ 風險分數尚未就緒';
