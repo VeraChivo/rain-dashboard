@@ -67,20 +67,27 @@
   .rain-cell{border-radius:6px;font-weight:600;padding:7px 4px;min-width:48px;display:block;margin:0 auto}
 
   .ai-report{background:linear-gradient(135deg,rgba(47,111,237,.07),rgba(124,92,252,.07));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
-  .ai-report-title{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-align:center}
-  .ai-recommend{font-size:1rem;font-weight:700;margin-bottom:2px;text-align:center}
-  .ai-reason{font-size:.82rem;color:var(--text);line-height:1.6;margin-bottom:6px;text-align:center}
-  .ai-poplist{display:flex;flex-direction:column;align-items:center;gap:2px}
-  .ai-poplist-row{display:flex;justify-content:space-between;width:150px;font-family:'JetBrains Mono',monospace;font-size:.85rem}
-  .ai-poplist-row .loc{color:var(--text)}
-  .ai-poplist-row .pop{color:var(--accent);font-weight:700}
-  .ai-avoid{font-size:.85rem;font-weight:700;color:var(--red);margin-bottom:6px;text-align:center}
-  .ai-avoid:empty{display:none;margin:0}
-  .ai-time{font-size:.8rem;line-height:1.6;color:var(--text);margin-bottom:6px;text-align:center}
-  .ai-tip{font-size:.78rem;text-align:center}
-  .ai-tip summary{cursor:pointer;color:var(--accent);font-weight:600}
-  .ai-tip[hidden]{display:none}
-  .ai-tip div{margin-top:6px;line-height:1.8;color:var(--text);font-family:'JetBrains Mono',monospace}
+  .ai-report-title{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:10px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-align:center}
+  /* ① AI 行程建議 */
+  .itinerary-text{margin-bottom:14px}
+  .itinerary-line{font-size:.88rem;color:var(--text);line-height:1.7;text-align:center}
+  /* ② 地點排序 */
+  .rank-section{margin-bottom:14px;padding-top:12px;border-top:1px solid var(--border)}
+  .rank-section-title{font-size:.76rem;font-weight:700;color:var(--accent2);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-align:center}
+  .rank-row{padding:6px 4px;border-bottom:1px solid rgba(0,0,0,.04)}
+  .rank-row:last-child{border-bottom:none}
+  .rank-head{display:flex;align-items:center;justify-content:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:.85rem}
+  .rank-medal{min-width:22px;text-align:center}
+  .rank-loc{font-weight:700;color:var(--text);min-width:36px}
+  .rank-score{color:var(--muted)}
+  .rank-status{font-size:.74rem;color:var(--muted);text-align:center;margin-top:2px}
+  /* ③ 今日注意時段 */
+  .alert-section{padding-top:12px;border-top:1px solid var(--border)}
+  .alert-section-title{font-size:.76rem;font-weight:700;color:var(--red);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-align:center}
+  .alert-row{margin-bottom:8px}
+  .alert-row:last-child{margin-bottom:0}
+  .alert-time{font-size:.78rem;font-weight:700;color:var(--text);text-align:center;margin-bottom:2px}
+  .alert-text{font-size:.78rem;color:var(--muted);line-height:1.6;text-align:center}
 
   /* CCTV 即時校正區 */
   .cctv-section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
@@ -119,13 +126,6 @@
   .rmv-route{font-size:.82rem;color:var(--text);margin-bottom:5px;padding-left:2px;line-height:1.5}
   .rmv-note{font-size:.7rem;color:var(--muted);display:block;padding-left:14px}
   .rmv-time{font-size:.7rem;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:8px}
-  /* 今天雨勢提醒（文字化時段） */
-  .timeline-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
-  .timeline-title{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-align:center}
-  .timeline-row{margin-bottom:10px}
-  .timeline-row:last-child{margin-bottom:0}
-  .timeline-time{font-size:.8rem;font-weight:700;color:var(--text);margin-bottom:2px;text-align:center}
-  .timeline-text{font-size:.8rem;color:var(--muted);line-height:1.6;text-align:center}
 </style>
 </head>
 <body>
@@ -147,23 +147,22 @@
   </button>
 </div>
 
-<!-- 🚗 出門建議決策卡（directionAdvisor）：以生活圈權重 × 現在降雨率排序推薦/避免方向 -->
+<!-- 🛵 今天出門去哪兒：三段式行程卡，取代舊的分數推薦 + 獨立雨勢提醒卡
+     ① AI 行程建議（自然語言）② 地點排序（透明度用，分數不隱藏）③ 今日注意時段 -->
 <div class="ai-report" id="aiReport">
   <div class="ai-report-title">🛵 今天出門去哪兒</div>
-  <div class="ai-recommend" id="ai-recommend">載入中…</div>
-  <div class="ai-reason" id="ai-reason"></div>
-  <div class="ai-avoid" id="ai-avoid"></div>
-  <div class="ai-time" id="ai-report-time"></div>
-  <details class="ai-tip" id="ai-tip-wrap" hidden>
-    <summary>查看各方向即時降雨率</summary>
-    <div id="ai-tip"></div>
-  </details>
-</div>
 
-<!-- ⏰ 今天雨勢提醒：把逐3h的訊號＋分數依上午/下午/晚上文字化，不做視覺時間軸 -->
-<div class="timeline-card">
-  <div class="timeline-title">⏰ 今天雨勢提醒</div>
-  <div id="rainTimelineBody">載入中…</div>
+  <div class="itinerary-text" id="itineraryText">載入中…</div>
+
+  <div class="rank-section">
+    <div class="rank-section-title">📍 今日地點排序</div>
+    <div id="rankList"></div>
+  </div>
+
+  <div class="alert-section">
+    <div class="alert-section-title">⏰ 今日注意時段</div>
+    <div id="alertList"></div>
+  </div>
 </div>
 
 <!-- 六地對照（24小時）：放在最前面，打開就先看到主表格 -->
@@ -632,6 +631,7 @@ function buildWeatherLayerAdvice(now) {
     return {
       label,
       finalScore: r?.risk?.finalScore ?? null,
+      pop: r?.pop ?? null,
       text: r?.text ?? '',
       signalLevel: r?.signalLevel ?? 'unknown',
     };
@@ -653,10 +653,14 @@ function buildWeatherLayerAdvice(now) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// P1-4：文字決策層 — 把逐3h的訊號＋分數依「上午/下午/晚上」文字化
-// 不做視覺時間軸；資料已經足夠（signal + finalScore），直接翻成一句話
-// 每個時段取「全部方向中最壞的訊號」代表整體風險，而不是逐方向列出
-// （逐方向的比較已經在上面的顏色清單，這裡只回答「幾點要注意」）
+// P1-5：行程建議引擎 — 從「地點排名」改成「幾點該去哪、幾點該避開」
+// 核心修正（使用者反覆確認過的重點）：
+//   1. 不是找「最壞的一個方向」代表整段，而是列出該時段「所有」
+//      有風險的方向，同時附上「該時段仍安全」的方向作為替代建議
+//      （例如：「溪口、民雄、新港雷雨風險增加，可優先考慮北港、大林」）
+//   2. 排名只回答「現在哪裡分數高」，行程建議要回答「今天怎麼安排」——
+//      兩者用同一份 computeDayBuckets() 資料，不會產生兩套判斷
+//   3. 不做視覺時間軸；資料翻成短句，讀起來像行程助理，不是氣象報告
 // ═══════════════════════════════════════════════════════════════
 const RAIN_TIMELINE_BUCKETS = [
   { key: 'morning',   label: '上午', hours: [9] },
@@ -664,13 +668,20 @@ const RAIN_TIMELINE_BUCKETS = [
   { key: 'evening',   label: '晚上', hours: [18, 21] },
 ];
 
-// 除了「最壞訊號等級」，也記住是哪個方向、幾點、分數多少，
-// 這樣文字才能講出「哪裡、幾點、幾分」而不是只說「部分地區」
+const RISKY_SIGNAL_LEVELS = ['severe', 'thunder', 'rain'];
+
+function riskKindLabel(level) {
+  if (level === 'severe') return '大雨或強陣風';
+  if (level === 'thunder') return '雷陣雨';
+  if (level === 'rain') return '短暫陣雨';
+  return '';
+}
+
+// 某個時段裡，每個方向各自的最壞訊號（同一時段可能橫跨 2 格，例如下午=12:00+15:00）
+// 回傳依 DIRECTION_WEIGHTS 固定順序排列的 risky／safe 兩組清單，供多地點合併文字使用
 function summarizeBucket(bucketHours, now) {
   const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
-  let worst = null; // { label, signalLevel, finalScore, startHour }
-  const scores = [];
-  let anyData = false;
+  const byLocation = {}; // label -> { label, signalLevel, finalScore, startHour }
 
   for (const label of Object.keys(DIRECTION_WEIGHTS)) {
     const risk = cachedWeatherLayers[label]?.risk || [];
@@ -679,55 +690,40 @@ function summarizeBucket(bucketHours, now) {
       const dayKey = `${r.start.getFullYear()}-${r.start.getMonth()}-${r.start.getDate()}`;
       if (dayKey !== todayKey || !bucketHours.includes(r.start.getHours())) continue;
 
-      anyData = true;
-      const finalScore = r.risk ? r.risk.finalScore : null;
-      if (finalScore !== null) scores.push(finalScore);
-
-      if (r.signalLevel && r.signalLevel !== 'unknown') {
-        const rank = SIGNAL_PRIORITY.indexOf(r.signalLevel);
-        const worstRank = worst ? SIGNAL_PRIORITY.indexOf(worst.signalLevel) : Infinity;
-        const higherRisk = rank < worstRank;
-        const sameRiskWorseScore = rank === worstRank && finalScore !== null && worst.finalScore !== null && finalScore < worst.finalScore;
-        if (higherRisk || sameRiskWorseScore) {
-          worst = { label, signalLevel: r.signalLevel, finalScore, startHour: r.start.getHours() };
-        }
+      const lvl = r.signalLevel;
+      const cur = byLocation[label];
+      const rank = lvl && lvl !== 'unknown' ? SIGNAL_PRIORITY.indexOf(lvl) : SIGNAL_PRIORITY.length;
+      const curRank = cur ? SIGNAL_PRIORITY.indexOf(cur.signalLevel) : Infinity;
+      if (!cur || rank < curRank) {
+        byLocation[label] = { label, signalLevel: lvl, finalScore: r.risk ? r.risk.finalScore : null, startHour: r.start.getHours() };
       }
     }
   }
 
-  if (!anyData) return null;
-  const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
-  return { worst, avgScore };
+  const entries = Object.keys(DIRECTION_WEIGHTS).map(l => byLocation[l]).filter(Boolean);
+  if (entries.length === 0) return null;
+
+  const risky = entries.filter(e => RISKY_SIGNAL_LEVELS.includes(e.signalLevel));
+  const safe = entries.filter(e => !RISKY_SIGNAL_LEVELS.includes(e.signalLevel));
+
+  let worstLevel = null;
+  for (const e of entries) {
+    if (e.signalLevel && e.signalLevel !== 'unknown') {
+      const rank = SIGNAL_PRIORITY.indexOf(e.signalLevel);
+      const worstRank = worstLevel ? SIGNAL_PRIORITY.indexOf(worstLevel) : Infinity;
+      if (rank < worstRank) worstLevel = e.signalLevel;
+    }
+  }
+
+  const scored = entries.filter(e => e.finalScore !== null);
+  const avgScore = scored.length ? Math.round(scored.reduce((a, b) => a + b.finalScore, 0) / scored.length) : null;
+
+  return { entries, risky, safe, worstLevel, avgScore };
 }
 
-// 有風險時具體講「哪裡、幾點、幾分」，並給出門/收假的截止時間；
-// 避免用「15點會下雨」這種確定語氣（資料是風險推估，不是降雨實況）
-function bucketToText(summary) {
-  if (!summary) return '尚無資料。';
-  const { worst, avgScore } = summary;
-  const level = worst?.signalLevel;
-
-  if (level === 'severe' || level === 'thunder') {
-    const deadline = `${pad(worst.startHour)}:00`;
-    const scoreStr = worst.finalScore !== null ? `（風險分約 ${worst.finalScore} 分）` : '';
-    const kind = level === 'severe' ? '大雨或強陣風' : '雷陣雨';
-    return `${worst.label}方向風險較高，可能有${kind}${scoreStr}，建議 ${deadline} 前出門或返回室內。`;
-  }
-  if (level === 'rain') {
-    const scoreStr = worst.finalScore !== null ? `（風險分約 ${worst.finalScore} 分）` : '';
-    return `${worst.label}方向可能有短暫陣雨${scoreStr}，備好雨具較保險。`;
-  }
-  if (level === 'stable') return '天氣穩定，適合外出。';
-  return avgScore !== null ? `各方向大致平穩（約 ${avgScore} 分），適合外出。` : '各方向大致平穩，適合外出。';
-}
-
-// 只顯示「還沒完全過去」的時段（該時段最後一格結束時間 > 現在）
-// 若剩餘時段全部平穩或全部偏危險，直接給一句全日總結，
-// 不逐段重複同樣的話（例如三段都寫「適合外出」意義不大）
-function renderRainTimeline(now) {
-  const body = document.getElementById('rainTimelineBody');
-  if (!body) return;
-
+// 只保留「還沒完全過去」的時段，跟 ①②③ 三個區塊共用同一份資料，
+// 不會出現「行程建議」跟「時段提醒」講的內容互相矛盾的情況
+function computeDayBuckets(now) {
   const buckets = [];
   for (const bucket of RAIN_TIMELINE_BUCKETS) {
     const firstH = Math.min(...bucket.hours);
@@ -737,37 +733,119 @@ function renderRainTimeline(now) {
     const summary = summarizeBucket(bucket.hours, now);
     if (!summary) continue;
 
-    const rangeLabel = `${bucket.label} ${pad(firstH)}:00～${pad(lastH + 3)}:00`;
-    buckets.push({ rangeLabel, summary });
+    buckets.push({
+      label: bucket.label,
+      rangeLabel: `${pad(firstH)}:00～${pad(lastH + 3)}:00`,
+      summary,
+    });
   }
+  return buckets;
+}
+
+// ⏰ 時段提醒用：多地點合併 + 替代方向建議
+// 避免「15點會下雨」這種確定語氣（資料是風險推估，不是降雨實況）
+function bucketAlertText(summary) {
+  if (!summary || summary.risky.length === 0) return null;
+  const riskyNames = summary.risky.map(e => e.label).join('、');
+  const kind = riskKindLabel(summary.worstLevel);
+  let text = `${riskyNames}${kind}風險增加`;
+  if (summary.safe.length > 0) {
+    const safeNames = summary.safe.map(e => e.label).join('、');
+    text += `，若要外出可優先考慮${safeNames}方向`;
+  }
+  return text;
+}
+
+// ① AI 行程建議用：跟上面同一份資料，語氣更接近一句自然的行程安排
+function bucketNarrativeClause(bucketLabel, summary) {
+  if (!summary) return null;
+  if (summary.risky.length === 0) {
+    return `${bucketLabel}各地天氣穩定，適合安排外出`;
+  }
+  const riskyNames = summary.risky.map(e => e.label).join('、');
+  const kind = riskKindLabel(summary.worstLevel);
+  let clause = `${bucketLabel}${riskyNames}${kind}風險增加`;
+  if (summary.safe.length > 0) {
+    const safeNames = summary.safe.map(e => e.label).join('、');
+    clause += `，優先考慮${safeNames}方向`;
+  }
+  return clause;
+}
+
+// 排行榜用：這個方向今天有沒有需要留意的時段，沒有就顯示目前降雨機率
+function locationStatusText(entry, buckets) {
+  for (const b of buckets) {
+    const hit = b.summary.risky.find(e => e.label === entry.label);
+    if (hit) return `${b.label}需留意${riskKindLabel(hit.signalLevel)}`;
+  }
+  return entry.pop !== null ? `降雨機率 ${entry.pop}%` : '目前穩定';
+}
+
+// ① 渲染：AI 行程建議（自然語言，讀起來像行程助理，不是氣象報告）
+function renderItineraryText(buckets) {
+  const el = document.getElementById('itineraryText');
+  if (!el) return;
 
   if (buckets.length === 0) {
-    body.innerHTML = '<div class="timeline-text">今日時段已結束，請於明日重新查看。</div>';
+    el.innerHTML = '<div class="itinerary-line">今日時段已結束，請於明日重新查看。</div>';
     return;
   }
 
-  if (buckets.length > 1) {
-    const allSafe = buckets.every(b => {
-      const lvl = b.summary.worst?.signalLevel;
-      return !lvl || lvl === 'stable' || lvl === 'neutral';
-    });
-    if (allSafe) {
-      body.innerHTML = '<div class="timeline-text">今日雨勢影響較低，各時段皆可安排外出。</div>';
-      return;
-    }
-
-    const allRisky = buckets.every(b => b.summary.avgScore !== null && b.summary.avgScore < 40);
-    if (allRisky) {
-      // 全天都不安全時，也要具體講「哪裡、幾點前」，不是只給籠統警告
-      const earliest = buckets[0];
-      body.innerHTML = `<div class="timeline-text">今日降雨訊號較頻繁，建議安排室內活動。${bucketToText(earliest.summary)}</div>`;
-      return;
-    }
+  const allSafe = buckets.length > 1 && buckets.every(b => b.summary.risky.length === 0);
+  if (allSafe) {
+    el.innerHTML = '<div class="itinerary-line">今日雨勢影響較低，各時段皆可安排外出。</div>';
+    return;
   }
 
-  body.innerHTML = buckets
-    .map(b => `<div class="timeline-row"><div class="timeline-time">${b.rangeLabel}</div><div class="timeline-text">${bucketToText(b.summary)}</div></div>`)
-    .join('');
+  const clauses = buckets.map(b => bucketNarrativeClause(b.label, b.summary)).filter(Boolean);
+  el.innerHTML = clauses.map(c => `<div class="itinerary-line">${c}。</div>`).join('');
+}
+
+// ② 渲染：地點排序（分數不隱藏，當作透明度／使用者自行比較用，不是主要結論）
+const RANK_MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣'];
+
+function renderRankList(wlAdvice, buckets) {
+  const listEl = document.getElementById('rankList');
+  if (!listEl) return;
+
+  if (wlAdvice.noData) {
+    listEl.innerHTML = '<div class="rank-status">資料尚未就緒</div>';
+    return;
+  }
+
+  const sorted = [...wlAdvice.entries].sort((a, b) => {
+    if (a.finalScore === null && b.finalScore === null) return 0;
+    if (a.finalScore === null) return 1;
+    if (b.finalScore === null) return -1;
+    return b.finalScore - a.finalScore;
+  });
+
+  listEl.innerHTML = sorted.map((e, i) => {
+    const medal = RANK_MEDALS[i] || `${i + 1}`;
+    const c = scoreToColor(e.finalScore);
+    const status = e.finalScore !== null ? locationStatusText(e, buckets) : '資料尚未就緒';
+    const scoreStr = e.finalScore !== null ? `${e.finalScore}分` : '—';
+    return `<div class="rank-row">
+      <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${e.label}</span><span class="rank-score">${c.emoji} ${scoreStr}</span></div>
+      <div class="rank-status">${status}</div>
+    </div>`;
+  }).join('');
+}
+
+// ③ 渲染：今日注意時段（結構化版本，跟①用同一份 buckets，不會互相矛盾）
+function renderAlertList(buckets) {
+  const listEl = document.getElementById('alertList');
+  if (!listEl) return;
+
+  const rows = buckets
+    .map(b => {
+      const text = bucketAlertText(b.summary);
+      if (!text) return null;
+      return `<div class="alert-row"><div class="alert-time">${b.label} ${b.rangeLabel}</div><div class="alert-text">${text}</div></div>`;
+    })
+    .filter(Boolean);
+
+  listEl.innerHTML = rows.length ? rows.join('') : '<div class="alert-text">今天暫無明顯雨勢時段。</div>';
 }
 
 // 對所有方向鄉鎮跑一次 P0～P1-2，結果暫存供 console 診斷用
@@ -919,48 +997,21 @@ function computeDirectionScores(townSlots, now) {
   }).sort((a, b) => b.score - a.score);
 }
 
-// 未來 2～3 小時內，推薦方向是否會轉為大雨（>=80%）
-function findUpcomingSpike(recommend) {
-  for (const r of recommend) {
-    const spike = r.nearFuture.find(s => s.value >= 80);
-    if (spike) return { label: r.label, spike };
-  }
-  return null;
-}
-
-// directionAdvisor：CWA 3h 資料 → 未來雨勢突發提醒 + 各方向明細（給 tip 用）
-// 主卡片的推薦/清單改由 buildWeatherLayerAdvice()（P1-2 finalScore）產生，
-// 這裡只保留 scores（CCTV 校正明細，給收合的 tip 顯示）跟 warning（突發雨提醒）
+// directionAdvisor：CWA 3h 資料 → 各方向明細（CCTV 校正過的 currentPop/effectivePop）
+// 主卡片的行程建議/排序/時段提醒改由 buildWeatherLayerAdvice() + summarizeBucket()
+// （P1-2 finalScore）產生；這裡只保留 scores，給雨胞移動方向卡片顯示各方向降雨率用
 function directionAdvisor(townSlots, now) {
   const scores = computeDirectionScores(townSlots, now);
   const withData = scores.filter(s => s.currentPop !== null);
-
-  if (withData.length === 0) {
-    return { scores, noData: true, warning: null };
-  }
-
-  const recommend = withData.slice(0, 2);
-  const upcoming = findUpcomingSpike(recommend);
-
-  let warning = null;
-  if (upcoming) {
-    const deadline = new Date(upcoming.spike.start.getTime() - 3600 * 1000);
-    const deadlineText = deadline > now ? `${pad(deadline.getHours())}:00 前` : '盡快';
-    warning = `⚠️ 預計 <strong>${pad(upcoming.spike.start.getHours())}:00</strong>，${upcoming.label}降雨率將達 ${upcoming.spike.value}%，建議${deadlineText}出門`;
-  }
-
-  return { scores, noData: false, warning };
+  return { scores, noData: withData.length === 0 };
 }
 
 // countyData = { 'F-D0047-029': [...chiayi locs], 'F-D0047-025': [...yunlin locs] }
 // 由 fetchAll 傳入；CCTV toggle 用 cachedCountyData
+// 三段式行程卡：① AI 行程建議（自然語言）② 地點排序（透明度）③ 今日注意時段
+// 三段共用 computeDayBuckets() 同一份資料，不會出現互相矛盾的描述
 function updateAiReport(countyData) {
-  const recommendEl = document.getElementById('ai-recommend');
-  const reasonEl = document.getElementById('ai-reason');
-  const avoidEl = document.getElementById('ai-avoid');
-  const timeEl = document.getElementById('ai-report-time');
-  const tipWrap = document.getElementById('ai-tip-wrap');
-  const tipEl = document.getElementById('ai-tip');
+  const itineraryEl = document.getElementById('itineraryText');
 
   try {
     const now = new Date();
@@ -973,86 +1024,28 @@ function updateAiReport(countyData) {
     const advice = directionAdvisor(townSlots, now);
 
     if (advice.noData) {
-      recommendEl.textContent = '⚠ 降雨資料未載入';
-      reasonEl.textContent = '請稍後重新整理';
-      avoidEl.textContent = '';
-      timeEl.textContent = '';
-      tipWrap.hidden = true;
+      itineraryEl.innerHTML = '<div class="itinerary-line">⚠ 降雨資料未載入，請稍後重新整理</div>';
+      document.getElementById('rankList').innerHTML = '';
+      document.getElementById('alertList').innerHTML = '';
       updateRainMovementCard(calcRainVector(cachedWindStations), []);
-      renderRainTimeline(now);
       return;
     }
 
-    // 主卡片改用 P1-2 finalScore（PoP + 天氣文字訊號 + 午後加乘），不是舊的 CCTV 校正分數
     const wlAdvice = buildWeatherLayerAdvice(now);
-    renderRainTimeline(now);
+    const buckets = computeDayBuckets(now);
 
-    if (wlAdvice.noData) {
-      recommendEl.textContent = '⚠ 風險分數尚未就緒';
-      recommendEl.style.color = 'var(--muted)';
-      reasonEl.innerHTML = '';
-    } else {
-      const scored = wlAdvice.entries.filter(e => e.finalScore !== null);
-      const avgScore = scored.length
-        ? Math.round(scored.reduce((sum, e) => sum + e.finalScore, 0) / scored.length)
-        : null;
-      // 分數完全相同時，逐一列出七個一樣的數字沒有資訊量，改為省略清單、
-      // 直接把這個共同數字放進標題裡，資訊不會因為省略清單而消失
-      const allSameScore = scored.length > 1 && scored.every(e => e.finalScore === scored[0].finalScore);
+    renderItineraryText(buckets);
+    renderRankList(wlAdvice, buckets);
+    renderAlertList(buckets);
 
-      if (wlAdvice.recommendTier === 'strong') {
-        const c = scoreToColor(wlAdvice.top1.finalScore);
-        recommendEl.textContent = `${c.emoji} ${wlAdvice.top1.label} 明顯較佳方向`;
-        recommendEl.style.color = c.css;
-      } else if (wlAdvice.recommendTier === 'normal') {
-        const c = scoreToColor(wlAdvice.top1.finalScore);
-        recommendEl.textContent = `${c.emoji} 建議往${wlAdvice.top1.label}方向`;
-        recommendEl.style.color = c.css;
-      } else {
-        const c = scoreToColor(avgScore);
-        recommendEl.textContent = allSameScore
-          ? `${c.emoji} 各方向差異不大，皆為 ${scored[0].finalScore} 分`
-          : `${c.emoji} 各方向差異不大`;
-        recommendEl.style.color = c.css;
-      }
-      if (allSameScore) {
-        reasonEl.innerHTML = '';
-      } else {
-        const rows = wlAdvice.entries.map(e => {
-          const c = scoreToColor(e.finalScore);
-          return `<div class="ai-poplist-row"><span class="loc">${c.emoji} ${e.label}</span><span class="pop">${e.finalScore !== null ? e.finalScore : '—'}</span></div>`;
-        }).join('');
-        reasonEl.innerHTML = `<div class="ai-poplist">${rows}</div>`;
-      }
-    }
-
-    avoidEl.textContent = ''; // 顏色清單已經涵蓋，不再重複一行「避免」文字
-    timeEl.innerHTML = advice.warning || '📊 未來 6 小時對流平穩，暫無突發大雨';
-
-    const cctvIcons = { dry: ' ☀', unknown: '', wet: ' 💧', raining: ' 🌧' };
-    tipEl.innerHTML = advice.scores
-      .map(s => {
-        if (s.currentPop === null) {
-          return `${s.label}　<span style="color:var(--muted)">—</span>`;
-        }
-        const cState = cctvStates[s.label] || 'unknown';
-        const cctvStr = cState !== 'unknown' ? cctvIcons[cState] : '';
-        const adjStr = s.cctvAdj !== 0 ? `→<strong>${s.effectivePop}%</strong>` : '';
-        return `${s.label}　${s.currentPop}%${adjStr}${cctvStr}`;
-      })
-      .join('<br>');
-    tipWrap.hidden = false;
-
-    // Rain movement card uses same scores + cached wind data
+    // 雨胞移動方向卡片沿用同一批 CCTV 校正過的 scores
     const rainVec = calcRainVector(cachedWindStations);
     updateRainMovementCard(rainVec, advice.scores);
   } catch (e) {
     console.error('[updateAiReport]', e);
-    recommendEl.textContent = '⚠ 資料處理失敗';
-    reasonEl.textContent = e.message;
-    avoidEl.textContent = '';
-    timeEl.textContent = '';
-    tipWrap.hidden = true;
+    itineraryEl.innerHTML = `<div class="itinerary-line">⚠ 資料處理失敗：${e.message}</div>`;
+    document.getElementById('rankList').innerHTML = '';
+    document.getElementById('alertList').innerHTML = '';
   }
 }
 
