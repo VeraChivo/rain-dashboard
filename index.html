@@ -18,11 +18,11 @@
   .toolbar{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px 8px;margin:0 0 18px}
   .date-badge{display:inline-flex;align-items:center;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:.68rem;color:var(--accent);font-family:'JetBrains Mono',monospace;white-space:nowrap}
   .badge-sep{color:var(--border)}
-  .btn-refresh{display:flex;align-items:center;gap:6px;padding:7px 14px;background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;border-radius:8px;color:#fff;font-family:'Noto Sans TC',sans-serif;font-size:.8rem;font-weight:700;cursor:pointer;transition:opacity .2s,transform .1s}
-  .btn-refresh:hover{opacity:.85}
+  .btn-refresh{display:flex;align-items:center;gap:6px;padding:7px 14px;background:var(--surface);border:1.5px solid var(--accent);border-radius:8px;color:var(--accent);font-family:'Noto Sans TC',sans-serif;font-size:.8rem;font-weight:700;cursor:pointer;transition:background .15s,transform .1s}
+  .btn-refresh:hover{background:var(--surface2)}
   .btn-refresh:active{transform:scale(.97)}
   .btn-refresh:disabled{opacity:.5;cursor:not-allowed}
-  .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:none}
+  .spinner{width:16px;height:16px;border:2px solid rgba(47,111,237,.25);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;display:none}
   .loading .spinner{display:block}
   .loading .btn-icon{display:none}
   @keyframes spin{to{transform:rotate(360deg)}}
