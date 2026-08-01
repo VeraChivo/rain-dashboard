@@ -867,12 +867,51 @@ function renderItineraryText(buckets, now) {
   el.innerHTML = lines.join('');
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Comfort Preference Layer v1 — 同一風險層內的排序輔助條件，不是分數
+// 規則（使用者反覆確認過）：
+//   1. 永遠不能蓋過風險判斷：需留意層一律排在低風險層之後，無論體感多好
+//   2. 只在「低風險」地點才計算體感，需留意的地點不需要體感文字
+//     （已經有風險提示，不該被「今天多雲」這種次要資訊分散注意力）
+//   3. 不產生獨立分數，只回傳排序用的優先序 index + 一句敘述文字
+//   4. 資料來源：WeatherDescription 文字關鍵字（v1，CWA 舒適度指數留給 v2）
+// ═══════════════════════════════════════════════════════════════
+const COMFORT_TAXONOMY = [
+  { level: 'cool',         keywords: ['涼爽', '舒適'] },
+  { level: 'overcast',     keywords: ['陰'] },
+  { level: 'cloudy',       keywords: ['多雲'] },
+  { level: 'partlycloudy', keywords: ['晴時多雲', '多雲時晴'] },
+  { level: 'sunny',        keywords: ['晴'] },
+  { level: 'muggy',        keywords: ['悶熱'] },
+  { level: 'hot',          keywords: ['炎熱', '高溫'] },
+];
+const COMFORT_PRIORITY = COMFORT_TAXONOMY.map(c => c.level);
+const COMFORT_DISPLAY_TEXT = {
+  cool: '天氣涼爽，體感相當舒適',
+  overcast: '今日多雲偏陰，戶外活動體感較佳',
+  cloudy: '今日多雲，戶外活動體感較佳',
+  partlycloudy: '晴時多雲，天氣穩定',
+  sunny: '天氣晴朗，但日照較強',
+  muggy: '天氣悶熱，戶外活動較不舒適',
+  hot: '氣溫偏高，建議減少長時間曝曬',
+};
+
+// 跟 Signal Extractor 同樣的「候選→取最高優先」模式，避免關鍵字重疊誤判
+// （例如「晴時多雲」同時含「晴」，不能兩個都算）
+function extractComfortLevel(text) {
+  if (!text) return null;
+  const candidates = COMFORT_TAXONOMY.filter(c => c.keywords.some(kw => text.includes(kw)));
+  if (!candidates.length) return null;
+  for (const level of COMFORT_PRIORITY) {
+    if (candidates.find(c => c.level === level)) return level;
+  }
+  return null;
+}
+
 // ② 渲染：地點排序（分數不隱藏，當作透明度／使用者自行比較用，不是主要結論）
-// 群組化：分數與狀態都相同的地點合併成一列，不逐筆重複顯示同樣的資訊
-// 狀態列只在「有真正的天氣差異」時才出現（該地點今天有未來風險）；
-// 純粹分數差距（例如85分vs80分，同樣都是晴朗無風險）不構成「差異」，
-// 不補「較適合」「天氣穩定」這類沒有實質資訊的填充句——
-// 有差異要講，沒差異別重複，不是看數字差距決定要不要講話
+// 群組化：分數、風險狀態、體感都相同的地點才合併成一列，不逐筆重複顯示
+// 排序：風險層優先（低風險一律排在需留意之前）；低風險層內用體感排序，
+// 分數只在體感相同時當次要排序依據——體感差異比幾分之差更能反映決策價值
 const RANK_MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣'];
 
 function renderRankList(wlAdvice, buckets) {
@@ -887,21 +926,32 @@ function renderRankList(wlAdvice, buckets) {
   const scored = wlAdvice.entries.filter(e => e.finalScore !== null);
   const unscored = wlAdvice.entries.filter(e => e.finalScore === null);
 
-  // 依「分數＋未來風險文字」分組：兩者都相同才合併，避免把風險不同的地點混在一起
   const groups = [];
   for (const e of scored) {
-    const note = locationRiskNote(e.label, buckets);
-    const key = `${e.finalScore}|${note ?? ''}`;
+    const riskNote = locationRiskNote(e.label, buckets);
+    const tier = riskNote ? 'risk' : 'low-risk';
+    const comfortLevel = tier === 'low-risk' ? extractComfortLevel(e.text) : null;
+    const key = `${tier}|${e.finalScore}|${riskNote ?? ''}|${comfortLevel ?? ''}`;
     let g = groups.find(g => g.key === key);
-    if (!g) { g = { key, score: e.finalScore, note, labels: [] }; groups.push(g); }
+    if (!g) { g = { key, tier, score: e.finalScore, note: riskNote, comfortLevel, labels: [] }; groups.push(g); }
     g.labels.push(e.label);
   }
-  groups.sort((a, b) => b.score - a.score);
+
+  groups.sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier === 'low-risk' ? -1 : 1; // 風險層優先，永不被體感蓋過
+    if (a.tier === 'low-risk') {
+      const ai = a.comfortLevel ? COMFORT_PRIORITY.indexOf(a.comfortLevel) : COMFORT_PRIORITY.length;
+      const bi = b.comfortLevel ? COMFORT_PRIORITY.indexOf(b.comfortLevel) : COMFORT_PRIORITY.length;
+      if (ai !== bi) return ai - bi;
+    }
+    return b.score - a.score;
+  });
 
   const rows = groups.map((g, i) => {
     const medal = RANK_MEDALS[i] || `${i + 1}`;
     const c = scoreToColor(g.score);
-    const statusHtml = g.note ? `<div class="rank-status">${g.note}</div>` : '';
+    const status = g.note || (g.comfortLevel ? COMFORT_DISPLAY_TEXT[g.comfortLevel] : null);
+    const statusHtml = status ? `<div class="rank-status">${status}</div>` : '';
     return `<div class="rank-row">
       <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${g.labels.join('、')}</span><span class="rank-score">${c.emoji} ${g.score}分</span></div>
       ${statusHtml}
