@@ -18,8 +18,8 @@
   .toolbar{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px 8px;margin:0 0 18px}
   .date-badge{display:inline-flex;align-items:center;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:.68rem;color:var(--accent);font-family:'JetBrains Mono',monospace;white-space:nowrap}
   .badge-sep{color:var(--border)}
-  .btn-refresh{display:flex;align-items:center;gap:6px;padding:7px 14px;background:var(--surface);border:1.5px solid var(--accent);border-radius:8px;color:var(--accent);font-family:'Noto Sans TC',sans-serif;font-size:.8rem;font-weight:700;cursor:pointer;transition:background .15s,transform .1s}
-  .btn-refresh:hover{background:var(--surface2)}
+  .btn-refresh{display:flex;align-items:center;gap:5px;padding:5px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--muted);font-family:'Noto Sans TC',sans-serif;font-size:.72rem;font-weight:600;cursor:pointer;transition:background .15s,border-color .15s,transform .1s}
+  .btn-refresh:hover{background:var(--surface2);border-color:var(--accent);color:var(--accent)}
   .btn-refresh:active{transform:scale(.97)}
   .btn-refresh:disabled{opacity:.5;cursor:not-allowed}
   .spinner{width:16px;height:16px;border:2px solid rgba(47,111,237,.25);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;display:none}
@@ -869,13 +869,11 @@ function renderItineraryText(buckets, now) {
 
 // ② 渲染：地點排序（分數不隱藏，當作透明度／使用者自行比較用，不是主要結論）
 // 群組化：分數與狀態都相同的地點合併成一列，不逐筆重複顯示同樣的資訊
-// 狀態列只在「有決策價值」時才出現：
-//   1. 該地點今天有未來風險 → 一定顯示（最高優先）
-//   2. 沒有風險，但整體排名確實有差異（最高分與最低分差距 ≥10）→
-//      第一名補一句「較適合」，其餘補「天氣穩定」作為輕量對照
-//   3. 沒有風險、整體差異也不大 → 不顯示狀態列，避免七筆都寫同一句廢話
+// 狀態列只在「有真正的天氣差異」時才出現（該地點今天有未來風險）；
+// 純粹分數差距（例如85分vs80分，同樣都是晴朗無風險）不構成「差異」，
+// 不補「較適合」「天氣穩定」這類沒有實質資訊的填充句——
+// 有差異要講，沒差異別重複，不是看數字差距決定要不要講話
 const RANK_MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣'];
-const RANK_DIFFERENTIATE_GAP = 10;
 
 function renderRankList(wlAdvice, buckets) {
   const listEl = document.getElementById('rankList');
@@ -900,17 +898,10 @@ function renderRankList(wlAdvice, buckets) {
   }
   groups.sort((a, b) => b.score - a.score);
 
-  const differentiated = groups.length > 1
-    && (groups[0].score - groups[groups.length - 1].score) >= RANK_DIFFERENTIATE_GAP;
-
   const rows = groups.map((g, i) => {
     const medal = RANK_MEDALS[i] || `${i + 1}`;
     const c = scoreToColor(g.score);
-    let status = g.note;
-    if (!status && differentiated) {
-      status = i === 0 ? '目前較適合安排戶外活動' : '天氣穩定';
-    }
-    const statusHtml = status ? `<div class="rank-status">${status}</div>` : '';
+    const statusHtml = g.note ? `<div class="rank-status">${g.note}</div>` : '';
     return `<div class="rank-row">
       <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${g.labels.join('、')}</span><span class="rank-score">${c.emoji} ${g.score}分</span></div>
       ${statusHtml}
@@ -1495,6 +1486,21 @@ function renderAll(allData) {
     </div>`;
   }
   document.getElementById('mainContent').innerHTML = mainHtml;
+  scrollTablesToDefaultRange();
+}
+
+// 表格預設捲動到 09:00 開始顯示（00:00～06:00 資料還在，
+// 需要的話往左拖曳即可看到，只是預設不佔第一眼版面）
+function scrollTablesToDefaultRange() {
+  document.querySelectorAll('.table-wrap').forEach(wrap => {
+    const table = wrap.querySelector('table');
+    if (!table) return;
+    const locHead = table.querySelector('th.loc-head');
+    const targetTh = Array.from(table.querySelectorAll('th.time-col'))
+      .find(th => th.textContent.startsWith('09:00'));
+    if (!locHead || !targetTh) return;
+    wrap.scrollLeft = targetTh.offsetLeft - locHead.offsetWidth;
+  });
 }
 
 async function fetchAll() {
