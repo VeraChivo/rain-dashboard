@@ -15,9 +15,10 @@
   header{text-align:center;margin-bottom:24px}
   .title{font-size:1.5rem;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:4px}
   .subtitle{font-size:.8rem;color:var(--muted);font-family:'JetBrains Mono',monospace}
-  .toolbar{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px 12px;margin:0 0 18px}
-  .date-badge{display:inline-block;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:4px 14px;font-size:.75rem;color:var(--accent);font-family:'JetBrains Mono',monospace}
-  .btn-refresh{display:flex;align-items:center;gap:8px;padding:8px 18px;background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;border-radius:8px;color:#fff;font-family:'Noto Sans TC',sans-serif;font-size:.85rem;font-weight:700;cursor:pointer;transition:opacity .2s,transform .1s}
+  .toolbar{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px 8px;margin:0 0 18px}
+  .date-badge{display:inline-flex;align-items:center;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:.68rem;color:var(--accent);font-family:'JetBrains Mono',monospace;white-space:nowrap}
+  .badge-sep{color:var(--border)}
+  .btn-refresh{display:flex;align-items:center;gap:6px;padding:7px 14px;background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;border-radius:8px;color:#fff;font-family:'Noto Sans TC',sans-serif;font-size:.8rem;font-weight:700;cursor:pointer;transition:opacity .2s,transform .1s}
   .btn-refresh:hover{opacity:.85}
   .btn-refresh:active{transform:scale(.97)}
   .btn-refresh:disabled{opacity:.5;cursor:not-allowed}
@@ -40,7 +41,7 @@
   .radar-error a{color:var(--accent);text-decoration:none}
   .radar-footer{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:.72rem;color:var(--muted);font-family:'JetBrains Mono',monospace}
   .radar-footer a{color:var(--accent);text-decoration:none}
-  .status-msg{text-align:center;font-size:.78rem;color:var(--muted);font-family:'JetBrains Mono',monospace}
+  .status-msg{font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;white-space:nowrap}
   .status-msg.ok{color:var(--green)}
   .status-msg.error{color:var(--red)}
 
@@ -134,13 +135,16 @@
 </header>
 
 <div class="toolbar">
-  <div class="date-badge" id="dateBadge">載入中…</div>
+  <div class="date-badge">
+    <span id="dateBadge">載入中…</span>
+    <span class="badge-sep">·</span>
+    <span class="status-msg" id="statusMsg">自動載入中…</span>
+  </div>
   <button class="btn-refresh" id="refreshBtn" onclick="fetchAll()">
     <span class="btn-icon">⟳</span>
     <span class="spinner"></span>
     重新整理
   </button>
-  <div class="status-msg" id="statusMsg">自動載入中…</div>
 </div>
 
 <!-- 🚗 出門建議決策卡（directionAdvisor）：以生活圈權重 × 現在降雨率排序推薦/避免方向 -->
@@ -1204,8 +1208,9 @@ function setLoading(on) {
 
 function updateDateBadge() {
   const now = new Date();
+  // 「更新」二字省略：右邊緊接著「· ✓ 資料已更新」，兩個「更新」重複
   document.getElementById('dateBadge').textContent =
-    `${now.getFullYear()}/${pad(now.getMonth()+1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())} 更新`;
+    `${now.getFullYear()}/${pad(now.getMonth()+1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
 }
 
 // 通用 fetch：解析 CWA Location 陣列（相容大/小寫 Locations 結構）
