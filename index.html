@@ -15,8 +15,9 @@
   header{text-align:center;margin-bottom:24px}
   .title{font-size:1.5rem;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:4px}
   .subtitle{font-size:.8rem;color:var(--muted);font-family:'JetBrains Mono',monospace}
-  .date-badge{display:inline-block;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:4px 14px;font-size:.75rem;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-top:10px}
-  .btn-refresh{display:flex;align-items:center;gap:8px;margin:16px auto 8px;padding:10px 24px;background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;border-radius:8px;color:#fff;font-family:'Noto Sans TC',sans-serif;font-size:.9rem;font-weight:700;cursor:pointer;transition:opacity .2s,transform .1s}
+  .toolbar{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px 12px;margin:0 0 18px}
+  .date-badge{display:inline-block;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:4px 14px;font-size:.75rem;color:var(--accent);font-family:'JetBrains Mono',monospace}
+  .btn-refresh{display:flex;align-items:center;gap:8px;padding:8px 18px;background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;border-radius:8px;color:#fff;font-family:'Noto Sans TC',sans-serif;font-size:.85rem;font-weight:700;cursor:pointer;transition:opacity .2s,transform .1s}
   .btn-refresh:hover{opacity:.85}
   .btn-refresh:active{transform:scale(.97)}
   .btn-refresh:disabled{opacity:.5;cursor:not-allowed}
@@ -39,7 +40,7 @@
   .radar-error a{color:var(--accent);text-decoration:none}
   .radar-footer{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:.72rem;color:var(--muted);font-family:'JetBrains Mono',monospace}
   .radar-footer a{color:var(--accent);text-decoration:none}
-  .status-msg{text-align:center;font-size:.78rem;color:var(--muted);margin-bottom:18px;min-height:18px;font-family:'JetBrains Mono',monospace}
+  .status-msg{text-align:center;font-size:.78rem;color:var(--muted);font-family:'JetBrains Mono',monospace}
   .status-msg.ok{color:var(--green)}
   .status-msg.error{color:var(--red)}
 
@@ -102,6 +103,9 @@
   .legend-dot{width:12px;height:12px;border-radius:3px;border:1px solid rgba(0,0,0,.08)}
   .source-note{text-align:center;margin-top:24px;font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:1.8}
   .source-note a{color:var(--accent);text-decoration:none}
+  /* 輔助資訊分組：收合卡片間距縮小，跟主表格拉開一點距離 */
+  .extras-group{display:flex;flex-direction:column;gap:8px;margin-top:24px}
+  .extras-group .rmv-card,.extras-group .cctv-section,.extras-group .radar-section{margin-bottom:0}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
   /* 雨胞移動方向文字報告 */
   .rmv-card{background:linear-gradient(135deg,rgba(124,92,252,.06),rgba(47,111,237,.06));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
@@ -127,15 +131,17 @@
 <header>
   <div class="title">☔ 降雨機率對照表</div>
   <div class="subtitle">嘉義・雲林 六地 · 中央氣象署</div>
-  <div class="date-badge" id="dateBadge">載入中…</div>
 </header>
 
-<button class="btn-refresh" id="refreshBtn" onclick="fetchAll()">
-  <span class="btn-icon">⟳</span>
-  <span class="spinner"></span>
-  重新整理
-</button>
-<div class="status-msg" id="statusMsg">自動載入中…</div>
+<div class="toolbar">
+  <div class="date-badge" id="dateBadge">載入中…</div>
+  <button class="btn-refresh" id="refreshBtn" onclick="fetchAll()">
+    <span class="btn-icon">⟳</span>
+    <span class="spinner"></span>
+    重新整理
+  </button>
+  <div class="status-msg" id="statusMsg">自動載入中…</div>
+</div>
 
 <!-- 🚗 出門建議決策卡（directionAdvisor）：以生活圈權重 × 現在降雨率排序推薦/避免方向 -->
 <div class="ai-report" id="aiReport">
@@ -156,45 +162,7 @@
   <div id="rainTimelineBody">載入中…</div>
 </div>
 
-<!-- 🌬 雨胞移動方向（風向推算）：目前風速資料常缺，先收合避免佔版面 -->
-<details class="rmv-card">
-  <summary class="rmv-title">🌬 雨胞移動方向</summary>
-  <div id="rainMovementCard" class="rmv-body"><span style="color:var(--muted)">載入中…</span></div>
-</details>
-
-<!-- 📷 CCTV 現況確認（手動設定，作為預報與現況的交叉比對；不影響上方出門建議分數） -->
-<details class="cctv-section">
-  <summary class="cctv-section-title">📷 現況確認</summary>
-  <div class="cctv-body">
-    <div class="cctv-note">請對照 CCTV 設定各方向現況，僅供參考、不影響上方「今天出門去哪兒」的分數</div>
-    <div id="cctvGrid"></div>
-    <div class="cctv-links">
-      快速查看監視器：
-      <a href="https://1968.freeway.gov.tw/" target="_blank">🛣 國道監視器</a>
-      <a href="https://www.mvdis.gov.tw/m3-emv-1968/cctv/index" target="_blank">🏞 省道監視器</a>
-    </div>
-    <div class="cctv-weight-note">* CCTV 為單點量測，僅供參考；夜間或鏡頭不清晰時建議設「不確定」</div>
-  </div>
-</details>
-
-<!-- 📡 雷達回波：目前圖片常無法載入（CORS/防盜連），先收合避免佔版面 -->
-<details class="radar-section">
-  <summary class="radar-title">📡 雷達回波｜即時降雨雲圖</summary>
-  <div class="radar-body">
-    <img id="radarImg" class="radar-img" alt="CWA雷達回波圖"
-         onerror="this.style.display='none';document.getElementById('radarError').style.display='block'" />
-    <div id="radarError" class="radar-error">
-      ⚠ 雷達圖無法載入<br>
-      <a href="https://www.cwa.gov.tw/V8/C/W/Radar.html" target="_blank">🔗 點此開啟 CWA 即時雷達</a>
-    </div>
-    <div class="radar-footer">
-      <span id="radarTime"></span>
-      <a href="https://www.cwa.gov.tw/V8/C/W/Radar.html" target="_blank">🔗 即時動態雷達</a>
-    </div>
-  </div>
-</details>
-
-<!-- 六地對照（24小時） -->
+<!-- 六地對照（24小時）：放在最前面，打開就先看到主表格 -->
 <div class="section-title">🗺 六地對照｜今天 + 明天</div>
 <div id="mainContent"></div>
 
@@ -208,6 +176,47 @@
 <div class="source-note">
   資料來源：<a href="https://opendata.cwa.gov.tw/" target="_blank">中央氣象署</a> · 鄉鎮3小時降雨機率預報<br>
   新港鄉 · 民雄鄉 · 溪口鄉 · 北港鎮 · 朴子市 · 斗南鎮
+</div>
+
+<!-- 輔助資訊：目前較少用到，收合並集中放在最下面，不影響一打開先看到主表格 -->
+<div class="extras-group">
+  <!-- 🌬 雨胞移動方向（風向推算）：目前風速資料常缺 -->
+  <details class="rmv-card">
+    <summary class="rmv-title">🌬 雨胞移動方向</summary>
+    <div id="rainMovementCard" class="rmv-body"><span style="color:var(--muted)">載入中…</span></div>
+  </details>
+
+  <!-- 📷 CCTV 現況確認（手動設定，作為預報與現況的交叉比對；不影響上方出門建議分數） -->
+  <details class="cctv-section">
+    <summary class="cctv-section-title">📷 現況確認</summary>
+    <div class="cctv-body">
+      <div class="cctv-note">請對照 CCTV 設定各方向現況，僅供參考、不影響上方「今天出門去哪兒」的分數</div>
+      <div id="cctvGrid"></div>
+      <div class="cctv-links">
+        快速查看監視器：
+        <a href="https://1968.freeway.gov.tw/" target="_blank">🛣 國道監視器</a>
+        <a href="https://www.mvdis.gov.tw/m3-emv-1968/cctv/index" target="_blank">🏞 省道監視器</a>
+      </div>
+      <div class="cctv-weight-note">* CCTV 為單點量測，僅供參考；夜間或鏡頭不清晰時建議設「不確定」</div>
+    </div>
+  </details>
+
+  <!-- 📡 雷達回波：目前圖片常無法載入（CORS/防盜連） -->
+  <details class="radar-section">
+    <summary class="radar-title">📡 雷達回波｜即時降雨雲圖</summary>
+    <div class="radar-body">
+      <img id="radarImg" class="radar-img" alt="CWA雷達回波圖"
+           onerror="this.style.display='none';document.getElementById('radarError').style.display='block'" />
+      <div id="radarError" class="radar-error">
+        ⚠ 雷達圖無法載入<br>
+        <a href="https://www.cwa.gov.tw/V8/C/W/Radar.html" target="_blank">🔗 點此開啟 CWA 即時雷達</a>
+      </div>
+      <div class="radar-footer">
+        <span id="radarTime"></span>
+        <a href="https://www.cwa.gov.tw/V8/C/W/Radar.html" target="_blank">🔗 即時動態雷達</a>
+      </div>
+    </div>
+  </details>
 </div>
 
 <script>
