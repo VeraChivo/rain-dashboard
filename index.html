@@ -158,10 +158,10 @@
   <div id="rainMovementCard"><span style="color:var(--muted)">載入中…</span></div>
 </div>
 
-<!-- 📷 CCTV 即時降雨校正（手動設定，修正方向評分；不取代 CWA 預報） -->
+<!-- 📷 CCTV 現況確認（手動設定，作為預報與現況的交叉比對；不影響上方出門建議分數） -->
 <div class="cctv-section">
-  <div class="cctv-section-title">📷 即時路況校正</div>
-  <div class="cctv-note">請對照 CCTV 設定各方向現況，自動修正出門建議分數（CCTV 佔 20%，CWA 預報佔 80%）</div>
+  <div class="cctv-section-title">📷 現況確認</div>
+  <div class="cctv-note">請對照 CCTV 設定各方向現況，僅供參考、不影響上方「今天出門去哪兒」的分數</div>
   <div id="cctvGrid"></div>
   <div class="cctv-links">
     快速查看監視器：
@@ -665,11 +665,13 @@ function bucketToText(summary) {
 }
 
 // 只顯示「還沒完全過去」的時段（該時段最後一格結束時間 > 現在）
+// 若剩餘時段全部平穩或全部偏危險，直接給一句全日總結，
+// 不逐段重複同樣的話（例如三段都寫「適合外出」意義不大）
 function renderRainTimeline(now) {
   const body = document.getElementById('rainTimelineBody');
   if (!body) return;
 
-  const rows = [];
+  const buckets = [];
   for (const bucket of RAIN_TIMELINE_BUCKETS) {
     const firstH = Math.min(...bucket.hours);
     const lastH = Math.max(...bucket.hours);
@@ -679,12 +681,35 @@ function renderRainTimeline(now) {
     if (!summary) continue;
 
     const rangeLabel = `${bucket.label} ${pad(firstH)}:00～${pad(lastH + 3)}:00`;
-    rows.push({ rangeLabel, text: bucketToText(summary) });
+    buckets.push({ rangeLabel, summary });
   }
 
-  body.innerHTML = rows.length
-    ? rows.map(r => `<div class="timeline-row"><div class="timeline-time">${r.rangeLabel}</div><div class="timeline-text">${r.text}</div></div>`).join('')
-    : '<div class="timeline-text">今日時段已結束，請於明日重新查看。</div>';
+  if (buckets.length === 0) {
+    body.innerHTML = '<div class="timeline-text">今日時段已結束，請於明日重新查看。</div>';
+    return;
+  }
+
+  if (buckets.length > 1) {
+    const allSafe = buckets.every(b =>
+      b.summary.worstSignalLevel === null
+      || b.summary.worstSignalLevel === 'stable'
+      || b.summary.worstSignalLevel === 'neutral'
+    );
+    if (allSafe) {
+      body.innerHTML = '<div class="timeline-text">今日雨勢影響較低，各時段皆可安排外出。</div>';
+      return;
+    }
+
+    const allRisky = buckets.every(b => b.summary.avgScore !== null && b.summary.avgScore < 40);
+    if (allRisky) {
+      body.innerHTML = '<div class="timeline-text">今日降雨訊號較頻繁，建議安排室內活動。</div>';
+      return;
+    }
+  }
+
+  body.innerHTML = buckets
+    .map(b => `<div class="timeline-row"><div class="timeline-time">${b.rangeLabel}</div><div class="timeline-text">${bucketToText(b.summary)}</div></div>`)
+    .join('');
 }
 
 // 對所有方向鄉鎮跑一次 P0～P1-2，結果暫存供 console 診斷用
@@ -928,11 +953,17 @@ function updateAiReport(countyData) {
         recommendEl.style.color = c.css;
       }
 
-      const rows = wlAdvice.entries.map(e => {
-        const c = scoreToColor(e.finalScore);
-        return `<div class="ai-poplist-row"><span class="loc">${c.emoji} ${e.label}</span><span class="pop">${e.finalScore !== null ? e.finalScore : '—'}</span></div>`;
-      }).join('');
-      reasonEl.innerHTML = `<div class="ai-poplist">${rows}</div>`;
+      // 分數完全相同時，逐一列出七個一樣的數字沒有資訊量，直接省略清單
+      const allSameScore = scored.length > 1 && scored.every(e => e.finalScore === scored[0].finalScore);
+      if (allSameScore) {
+        reasonEl.innerHTML = '';
+      } else {
+        const rows = wlAdvice.entries.map(e => {
+          const c = scoreToColor(e.finalScore);
+          return `<div class="ai-poplist-row"><span class="loc">${c.emoji} ${e.label}</span><span class="pop">${e.finalScore !== null ? e.finalScore : '—'}</span></div>`;
+        }).join('');
+        reasonEl.innerHTML = `<div class="ai-poplist">${rows}</div>`;
+      }
     }
 
     avoidEl.textContent = ''; // 顏色清單已經涵蓋，不再重複一行「避免」文字
