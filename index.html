@@ -30,8 +30,10 @@
   tbody tr:hover .loc-cell{background:var(--surface2)}
   .now-col-head{color:var(--accent)!important;background:rgba(47,111,237,.12)!important}
   .now-col-cell{background:rgba(47,111,237,.07)!important}
-  /* 雷達回波 */
+  /* 雷達回波（收合區塊） */
   .radar-section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:20px}
+  .radar-title{font-size:.9rem;font-weight:700;color:var(--accent);cursor:pointer}
+  .radar-body{margin-top:10px}
   .radar-img{width:100%;border-radius:8px;display:block;min-height:120px;background:var(--surface2)}
   .radar-error{display:none;text-align:center;padding:24px 12px;color:var(--muted);font-size:.78rem;line-height:1.8}
   .radar-error a{color:var(--accent);text-decoration:none}
@@ -102,7 +104,8 @@
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
   /* 雨胞移動方向文字報告 */
   .rmv-card{background:linear-gradient(135deg,rgba(124,92,252,.06),rgba(47,111,237,.06));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
-  .rmv-title{font-size:.82rem;font-weight:700;color:var(--accent2);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em}
+  .rmv-title{font-size:.82rem;font-weight:700;color:var(--accent2);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;cursor:pointer}
+  .rmv-body{margin-top:8px}
   .rmv-movement{font-size:.9rem;font-weight:700;color:var(--text);margin-bottom:2px;line-height:1.7}
   .rmv-movement strong{color:var(--accent2)}
   .rmv-divider{border:none;border-top:1px solid var(--border);margin:8px 0}
@@ -115,8 +118,8 @@
   .timeline-title{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-align:center}
   .timeline-row{margin-bottom:10px}
   .timeline-row:last-child{margin-bottom:0}
-  .timeline-time{font-size:.8rem;font-weight:700;color:var(--text);margin-bottom:2px}
-  .timeline-text{font-size:.8rem;color:var(--muted);line-height:1.6}
+  .timeline-time{font-size:.8rem;font-weight:700;color:var(--text);margin-bottom:2px;text-align:center}
+  .timeline-text{font-size:.8rem;color:var(--muted);line-height:1.6;text-align:center}
 </style>
 </head>
 <body>
@@ -152,11 +155,11 @@
   <div id="rainTimelineBody">載入中…</div>
 </div>
 
-<!-- 🌬 雨胞移動方向（風向推算）：告訴你雨往哪邊走、哪個方向最安全 -->
-<div class="rmv-card">
-  <div class="rmv-title">🌬 雨胞移動方向</div>
-  <div id="rainMovementCard"><span style="color:var(--muted)">載入中…</span></div>
-</div>
+<!-- 🌬 雨胞移動方向（風向推算）：目前風速資料常缺，先收合避免佔版面 -->
+<details class="rmv-card">
+  <summary class="rmv-title">🌬 雨胞移動方向</summary>
+  <div id="rainMovementCard" class="rmv-body"><span style="color:var(--muted)">載入中…</span></div>
+</details>
 
 <!-- 📷 CCTV 現況確認（手動設定，作為預報與現況的交叉比對；不影響上方出門建議分數） -->
 <div class="cctv-section">
@@ -171,20 +174,22 @@
   <div class="cctv-weight-note">* CCTV 為單點量測，僅供參考；夜間或鏡頭不清晰時建議設「不確定」</div>
 </div>
 
-<!-- 📡 雷達回波：即時判斷雨雲方向與趨勢，輔助 3h 預報 -->
-<div class="section-title">📡 雷達回波｜即時降雨雲圖</div>
-<div class="radar-section">
-  <img id="radarImg" class="radar-img" alt="CWA雷達回波圖"
-       onerror="this.style.display='none';document.getElementById('radarError').style.display='block'" />
-  <div id="radarError" class="radar-error">
-    ⚠ 雷達圖無法載入<br>
-    <a href="https://www.cwa.gov.tw/V8/C/W/Radar.html" target="_blank">🔗 點此開啟 CWA 即時雷達</a>
+<!-- 📡 雷達回波：目前圖片常無法載入（CORS/防盜連），先收合避免佔版面 -->
+<details class="radar-section">
+  <summary class="radar-title">📡 雷達回波｜即時降雨雲圖</summary>
+  <div class="radar-body">
+    <img id="radarImg" class="radar-img" alt="CWA雷達回波圖"
+         onerror="this.style.display='none';document.getElementById('radarError').style.display='block'" />
+    <div id="radarError" class="radar-error">
+      ⚠ 雷達圖無法載入<br>
+      <a href="https://www.cwa.gov.tw/V8/C/W/Radar.html" target="_blank">🔗 點此開啟 CWA 即時雷達</a>
+    </div>
+    <div class="radar-footer">
+      <span id="radarTime"></span>
+      <a href="https://www.cwa.gov.tw/V8/C/W/Radar.html" target="_blank">🔗 即時動態雷達</a>
+    </div>
   </div>
-  <div class="radar-footer">
-    <span id="radarTime"></span>
-    <a href="https://www.cwa.gov.tw/V8/C/W/Radar.html" target="_blank">🔗 即時動態雷達</a>
-  </div>
-</div>
+</details>
 
 <!-- 六地對照（24小時） -->
 <div class="section-title">🗺 六地對照｜今天 + 明天</div>
@@ -299,9 +304,19 @@ function parse3hSlots(locations, townName) {
     .filter(t => !isNaN(t.value));
 }
 
+// 找「現在」對應的時段。CWA 資料在整點交界附近偶爾會有空隙
+// （例如上一格已從回應中移除，下一格還沒開始），此時不直接判無資料，
+// 改退而求其次找「已開始、最接近現在」的時段；真的一格都沒開始
+// 才用「最快要開始」的下一格；陣列完全是空的才回傳 null
 function getCurrentSlotValue(slots, now) {
-  const slot = slots.find(s => now >= s.start && now < s.end);
-  return slot ? slot.value : null;
+  const exact = slots.find(s => now >= s.start && now < s.end);
+  if (exact) return exact.value;
+
+  const started = slots.filter(s => s.start <= now).sort((a, b) => b.start - a.start);
+  if (started.length) return started[0].value;
+
+  const upcoming = slots.filter(s => s.start > now).sort((a, b) => a.start - b.start);
+  return upcoming.length ? upcoming[0].value : null;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -580,10 +595,19 @@ function scoreToActionText(score) {
 // 目前這條線尚未接 CCTV 校正（CCTV 面板仍可切換，但不影響這裡的分數，
 // 要等排定的 CCTV 整合階段才會串起來）
 // ═══════════════════════════════════════════════════════════════
+// 同樣的整點交界容錯（見 getCurrentSlotValue 註解）
 function getCurrentRiskForLabel(label, now) {
   const risk = cachedWeatherLayers[label]?.risk;
   if (!risk) return null;
-  return risk.find(r => r.start && r.end && now >= r.start && now < r.end) || null;
+
+  const exact = risk.find(r => r.start && r.end && now >= r.start && now < r.end);
+  if (exact) return exact;
+
+  const started = risk.filter(r => r.start && r.start <= now).sort((a, b) => b.start - a.start);
+  if (started.length) return started[0];
+
+  const upcoming = risk.filter(r => r.start && r.start > now).sort((a, b) => a.start - b.start);
+  return upcoming.length ? upcoming[0] : null;
 }
 
 function buildWeatherLayerAdvice(now) {
