@@ -772,13 +772,14 @@ function bucketNarrativeClause(bucketLabel, summary) {
   return clause;
 }
 
-// 排行榜用：這個方向今天有沒有需要留意的時段，沒有就顯示目前降雨機率
-function locationStatusText(entry, buckets) {
+// 排行榜用：這個方向今天有沒有需要留意的時段；沒有就回 null（不顯示狀態列）
+// 不再固定顯示「降雨機率X%」——每格都寫百分比是資料展示，不是決策資訊
+function locationRiskNote(label, buckets) {
   for (const b of buckets) {
-    const hit = b.summary.risky.find(e => e.label === entry.label);
+    const hit = b.summary.risky.find(e => e.label === label);
     if (hit) return `${b.label}需留意${riskKindLabel(hit.signalLevel)}`;
   }
-  return entry.pop !== null ? `降雨機率 ${entry.pop}%` : '目前穩定';
+  return null;
 }
 
 // ① 渲染：AI 行程建議（自然語言，讀起來像行程助理，不是氣象報告）
@@ -802,7 +803,14 @@ function renderItineraryText(buckets) {
 }
 
 // ② 渲染：地點排序（分數不隱藏，當作透明度／使用者自行比較用，不是主要結論）
+// 群組化：分數與狀態都相同的地點合併成一列，不逐筆重複顯示同樣的資訊
+// 狀態列只在「有決策價值」時才出現：
+//   1. 該地點今天有未來風險 → 一定顯示（最高優先）
+//   2. 沒有風險，但整體排名確實有差異（最高分與最低分差距 ≥10）→
+//      第一名補一句「較適合」，其餘補「天氣穩定」作為輕量對照
+//   3. 沒有風險、整體差異也不大 → 不顯示狀態列，避免七筆都寫同一句廢話
 const RANK_MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣'];
+const RANK_DIFFERENTIATE_GAP = 10;
 
 function renderRankList(wlAdvice, buckets) {
   const listEl = document.getElementById('rankList');
@@ -813,23 +821,46 @@ function renderRankList(wlAdvice, buckets) {
     return;
   }
 
-  const sorted = [...wlAdvice.entries].sort((a, b) => {
-    if (a.finalScore === null && b.finalScore === null) return 0;
-    if (a.finalScore === null) return 1;
-    if (b.finalScore === null) return -1;
-    return b.finalScore - a.finalScore;
+  const scored = wlAdvice.entries.filter(e => e.finalScore !== null);
+  const unscored = wlAdvice.entries.filter(e => e.finalScore === null);
+
+  // 依「分數＋未來風險文字」分組：兩者都相同才合併，避免把風險不同的地點混在一起
+  const groups = [];
+  for (const e of scored) {
+    const note = locationRiskNote(e.label, buckets);
+    const key = `${e.finalScore}|${note ?? ''}`;
+    let g = groups.find(g => g.key === key);
+    if (!g) { g = { key, score: e.finalScore, note, labels: [] }; groups.push(g); }
+    g.labels.push(e.label);
+  }
+  groups.sort((a, b) => b.score - a.score);
+
+  const differentiated = groups.length > 1
+    && (groups[0].score - groups[groups.length - 1].score) >= RANK_DIFFERENTIATE_GAP;
+
+  const rows = groups.map((g, i) => {
+    const medal = RANK_MEDALS[i] || `${i + 1}`;
+    const c = scoreToColor(g.score);
+    let status = g.note;
+    if (!status && differentiated) {
+      status = i === 0 ? '目前較適合安排戶外活動' : '天氣穩定';
+    }
+    const statusHtml = status ? `<div class="rank-status">${status}</div>` : '';
+    return `<div class="rank-row">
+      <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${g.labels.join('、')}</span><span class="rank-score">${c.emoji} ${g.score}分</span></div>
+      ${statusHtml}
+    </div>`;
   });
 
-  listEl.innerHTML = sorted.map((e, i) => {
-    const medal = RANK_MEDALS[i] || `${i + 1}`;
-    const c = scoreToColor(e.finalScore);
-    const status = e.finalScore !== null ? locationStatusText(e, buckets) : '資料尚未就緒';
-    const scoreStr = e.finalScore !== null ? `${e.finalScore}分` : '—';
-    return `<div class="rank-row">
-      <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${e.label}</span><span class="rank-score">${c.emoji} ${scoreStr}</span></div>
-      <div class="rank-status">${status}</div>
-    </div>`;
-  }).join('');
+  if (unscored.length) {
+    const medal = RANK_MEDALS[groups.length] || `${groups.length + 1}`;
+    rows.push(`<div class="rank-row">
+      <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${unscored.map(e => e.label).join('、')}</span><span class="rank-score">—</span></div>
+      <div class="rank-status">資料尚未就緒</div>
+    </div>`);
+  }
+
+  listEl.innerHTML = rows.join('');
 }
 
 // ③ 渲染：今日注意時段（結構化版本，跟①用同一份 buckets，不會互相矛盾）
@@ -845,7 +876,9 @@ function renderAlertList(buckets) {
     })
     .filter(Boolean);
 
-  listEl.innerHTML = rows.length ? rows.join('') : '<div class="alert-text">今天暫無明顯雨勢時段。</div>';
+  listEl.innerHTML = rows.length
+    ? rows.join('')
+    : '<div class="alert-text">今天暫無明顯雨勢時段，天氣宜人，適合安排外出。</div>';
 }
 
 // 對所有方向鄉鎮跑一次 P0～P1-2，結果暫存供 console 診斷用
