@@ -746,57 +746,81 @@ function computeDayBuckets(now) {
   return buckets;
 }
 
-// 從一組帶有 .text（WeatherDescription）的方向清單，取「多數決」體感等級，
-// 同票時取 COMFORT_PRIORITY 較前者。用於①的敘述——不只講會不會下雨，
-// 也講今天悶不悶熱、要不要防曬，這是媽媽真正想知道的資訊
-function aggregateComfortLevel(entries) {
-  const levels = entries.map(e => extractComfortLevel(e.text)).filter(Boolean);
+// 分別對體感軸／曝曬軸取「多數決」（同票時取優先序較前者）
+function aggregateThermalLevel(entries) {
+  const levels = entries.map(e => extractThermalLevel(e.text));
+  const counts = {};
+  for (const l of levels) {
+    const key = l === null ? '__none__' : l;
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  let best = null, bestCount = -1;
+  for (const level of THERMAL_RANK) {
+    const key = level === null ? '__none__' : level;
+    const cnt = counts[key] || 0;
+    if (cnt > bestCount) { best = level; bestCount = cnt; }
+  }
+  return best;
+}
+
+function aggregateExposureLevel(entries) {
+  const levels = entries.map(e => extractExposureLevel(e.text)).filter(Boolean);
   if (!levels.length) return null;
   const counts = {};
   levels.forEach(l => { counts[l] = (counts[l] || 0) + 1; });
   let best = null, bestCount = -1;
-  for (const level of COMFORT_PRIORITY) {
+  for (const level of EXPOSURE_RANK) {
+    if (level === null) continue;
     const cnt = counts[level] || 0;
     if (cnt > bestCount) { best = level; bestCount = cnt; }
   }
   return best;
 }
 
-const COMFORT_ADJECTIVE = {
-  cool: '涼爽', overcast: '多雲偏陰', cloudy: '多雲', partlycloudy: '晴時多雲',
-  sunny: '晴朗、日照較強', muggy: '悶熱', hot: '氣溫較高',
-};
-
-// 沒有風險的時段：不再只寫「天氣穩定」，依體感給更具體的建議
-function comfortNarrativeSafeClause(bucketLabel, comfortLevel) {
-  const adj = COMFORT_ADJECTIVE[comfortLevel];
-  if (!adj) return `${bucketLabel}各地天氣穩定，適合安排外出`;
-  if (comfortLevel === 'muggy' || comfortLevel === 'hot') {
-    return `${bucketLabel}體感${adj}，建議避開長時間曝曬，適合短時間外出`;
+// 沒有風險的時段：體感異常（悶熱/高溫）優先講，其次才是曝曬提醒，
+// 兩者都沒有才是單純「天氣穩定」
+function comfortNarrativeSafeClause(bucketLabel, thermalLevel, exposureLevel) {
+  if (thermalLevel === 'hot' || thermalLevel === 'muggy') {
+    const word = thermalLevel === 'hot' ? '氣溫較高' : '悶熱';
+    return `${bucketLabel}體感${word}，建議避開長時間曝曬，適合短時間外出`;
   }
-  return `${bucketLabel}天氣${adj}，體感較舒適，適合安排外出`;
+  if (exposureLevel === 'sunny') {
+    return `${bucketLabel}天氣晴朗、日照較強，適合外出但建議防曬`;
+  }
+  if (exposureLevel === 'overcast' || exposureLevel === 'cloudy') {
+    const word = exposureLevel === 'overcast' ? '多雲偏陰' : '多雲';
+    return `${bucketLabel}天氣${word}，體感較舒適，適合安排外出`;
+  }
+  return `${bucketLabel}各地天氣穩定，適合安排外出`;
 }
 
-// 全天無風險時的開場白：不再只回答「會不會下雨」，把體感（悶熱/涼爽/日照）
-// 一併講清楚——這才是媽媽真正想知道的「今天到底適不適合出門」
-function allSafeComfortLines(comfortLevel) {
-  if (comfortLevel === 'muggy' || comfortLevel === 'hot') {
-    const adj = COMFORT_ADJECTIVE[comfortLevel];
+// 全天無風險時的開場白：體感（悶不悶熱）決定要不要建議避開午後，
+// 曝曬（晴朗/多雲）只決定要不要提醒防曬，兩者不混為一談——
+// 陰天不該被當壞天氣，晴朗也不該直接等於扣分
+function allSafeComfortLines(thermalLevel, exposureLevel) {
+  if (thermalLevel === 'hot' || thermalLevel === 'muggy') {
+    const word = thermalLevel === 'hot' ? '氣溫較高' : '體感悶熱';
     return [
       '今天適合早上或傍晚外出。',
-      `午後體感${adj}，建議避開長時間曝曬，記得補水、防曬。`,
+      `午後${word}，建議避開長時間曝曬，記得補水、防曬。`,
     ];
   }
-  if (comfortLevel === 'sunny') {
+  if (exposureLevel === 'sunny') {
     return [
       '今天適合外出，雨勢影響低，但日照較強，記得補水、防曬。',
       '各地皆可安排活動，任君挑選！',
     ];
   }
-  const adj = COMFORT_ADJECTIVE[comfortLevel];
-  if (adj) {
+  if (exposureLevel === 'overcast' || exposureLevel === 'cloudy') {
+    const word = exposureLevel === 'overcast' ? '多雲偏陰' : '多雲';
     return [
-      `今天適合外出，天氣${adj}、體感較舒適，雨勢影響低，各地皆可安排活動。`,
+      `今天適合外出，天氣${word}、體感較舒適，雨勢影響低，各地皆可安排活動。`,
+      '🥳 沒有明顯需要避開的時段，任君挑選！',
+    ];
+  }
+  if (thermalLevel === 'cool') {
+    return [
+      '今天適合外出，天氣涼爽、體感相當舒適，雨勢影響低，各地皆可安排活動。',
       '🥳 沒有明顯需要避開的時段，任君挑選！',
     ];
   }
@@ -809,7 +833,11 @@ function allSafeComfortLines(comfortLevel) {
 function bucketNarrativeClause(bucketLabel, summary) {
   if (!summary) return null;
   if (summary.risky.length === 0) {
-    return comfortNarrativeSafeClause(bucketLabel, aggregateComfortLevel(summary.safe));
+    return comfortNarrativeSafeClause(
+      bucketLabel,
+      aggregateThermalLevel(summary.safe),
+      aggregateExposureLevel(summary.safe)
+    );
   }
   const onsetHour = Math.min(...summary.risky.map(e => e.startHour));
   const riskyNames = summary.risky.map(e => e.label).join('、');
@@ -914,8 +942,10 @@ function renderItineraryText(buckets, now) {
   // 暑假模式：沿用整天逐時段的行程敘述（親子活動安排取向）
   const allSafe = buckets.length > 1 && buckets.every(b => b.summary.risky.length === 0);
   if (allSafe) {
-    const dayComfort = aggregateComfortLevel(buckets.flatMap(b => b.summary.safe));
-    el.innerHTML = allSafeComfortLines(dayComfort).map(l => `<div class="itinerary-line">${l}</div>`).join('');
+    const allEntries = buckets.flatMap(b => b.summary.safe);
+    const thermalLevel = aggregateThermalLevel(allEntries);
+    const exposureLevel = aggregateExposureLevel(allEntries);
+    el.innerHTML = allSafeComfortLines(thermalLevel, exposureLevel).map(l => `<div class="itinerary-line">${l}</div>`).join('');
     return;
   }
 
@@ -926,50 +956,71 @@ function renderItineraryText(buckets, now) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Comfort Preference Layer v1 — 同一風險層內的排序輔助條件，不是分數
-// 規則（使用者反覆確認過）：
+// Comfort Preference Layer v2 — 體感（Thermal）＋ 曝曬（Exposure）雙軸
+// 使用者反覆確認過的修正：「晴天」不等於不好，陰天也不等於優勢，
+// 兩者是不同問題——體感軸回答「舒不舒服」，曝曬軸回答「要不要防曬」。
+// 規則：
 //   1. 永遠不能蓋過風險判斷：需留意層一律排在低風險層之後，無論體感多好
-//   2. 只在「低風險」地點才計算體感，需留意的地點不需要體感文字
-//     （已經有風險提示，不該被「今天多雲」這種次要資訊分散注意力）
+//   2. 只在「低風險」地點才計算體感/曝曬，需留意的地點不需要這些文字
 //   3. 不產生獨立分數，只回傳排序用的優先序 index + 一句敘述文字
-//   4. 資料來源：WeatherDescription 文字關鍵字（v1，CWA 舒適度指數留給 v2）
+//   4. 排序時體感軸優先、曝曬軸只在體感相同時當次要 tie-break，
+//     曝曬本身不直接打擊地點排名，只決定要不要提醒防曬
+//   5. 資料來源：WeatherDescription 文字關鍵字（v1，CWA 舒適度指數留給 v2）
 // ═══════════════════════════════════════════════════════════════
-const COMFORT_TAXONOMY = [
-  { level: 'cool',         keywords: ['涼爽', '舒適'] },
-  { level: 'overcast',     keywords: ['陰'] },
-  { level: 'cloudy',       keywords: ['多雲'] },
-  { level: 'partlycloudy', keywords: ['晴時多雲', '多雲時晴'] },
-  { level: 'sunny',        keywords: ['晴'] },
+
+// 體感軸：舒適 > 一般(無關鍵字) > 偏熱 > 悶熱 > 高溫悶熱 — 決定排序
+const THERMAL_TAXONOMY = [
+  { level: 'hot',          keywords: ['高溫悶熱', '高溫', '炎熱'] },
+  { level: 'transitional', keywords: ['舒適至悶熱'] },
   { level: 'muggy',        keywords: ['悶熱'] },
-  { level: 'hot',          keywords: ['炎熱', '高溫'] },
+  { level: 'cool',         keywords: ['舒適', '涼爽'] },
 ];
-// 比較用優先序（哪個體感「比較好」，給排序/多數決 tie-break 用）
-const COMFORT_PRIORITY = COMFORT_TAXONOMY.map(c => c.level);
-// 抽取用優先序（同一句話裡多個關鍵字同時出現時，哪個「該贏」）
-// 雲量詞（多雲/陰/晴）跟體感溫度詞（悶熱/炎熱/高溫）是兩個不同維度，
-// CWA 常常兩者都寫（例如「多雲。...悶熱。」），這種情況體感溫度比雲量
-// 更決定「能不能出門」，所以抽取時優先判定悶熱/炎熱，而不是被雲量詞蓋掉
-const COMFORT_EXTRACT_PRIORITY = ['muggy', 'hot', 'cool', 'overcast', 'cloudy', 'partlycloudy', 'sunny'];
-const COMFORT_DISPLAY_TEXT = {
+const THERMAL_EXTRACT_PRIORITY = ['hot', 'transitional', 'muggy', 'cool'];
+const THERMAL_RANK = ['cool', null, 'transitional', 'muggy', 'hot']; // null = 一般
+const THERMAL_TEXT = {
   cool: '天氣涼爽，體感相當舒適',
-  overcast: '今日多雲偏陰，戶外活動體感較佳',
-  cloudy: '今日多雲，戶外活動體感較佳',
-  partlycloudy: '晴時多雲，天氣穩定',
-  sunny: '天氣晴朗，但日照較強',
+  transitional: '天氣稍偏悶熱，體感普通',
   muggy: '天氣悶熱，戶外活動較不舒適',
   hot: '氣溫偏高，建議減少長時間曝曬',
 };
-
-// 跟 Signal Extractor 同樣的「候選→取最高優先」模式，避免關鍵字重疊誤判
-// （例如「晴時多雲」同時含「晴」，不能兩個都算；「多雲」+「悶熱」同時出現，
-// 悶熱要贏，見上方 COMFORT_EXTRACT_PRIORITY 註解）
-function extractComfortLevel(text) {
+function extractThermalLevel(text) {
   if (!text) return null;
-  const candidates = COMFORT_TAXONOMY.filter(c => c.keywords.some(kw => text.includes(kw)));
+  const candidates = THERMAL_TAXONOMY.filter(c => c.keywords.some(kw => text.includes(kw)));
   if (!candidates.length) return null;
-  for (const level of COMFORT_EXTRACT_PRIORITY) {
+  for (const level of THERMAL_EXTRACT_PRIORITY) {
     if (candidates.find(c => c.level === level)) return level;
   }
+  return null;
+}
+
+// 曝曬軸：只描述雲量/日照，不代表「好不好」，只用來決定要不要提醒防曬——
+// 不直接影響排序（只在體感相同時當次要 tie-break）
+const EXPOSURE_TAXONOMY = [
+  { level: 'partlycloudy', keywords: ['晴時多雲', '多雲時晴'] },
+  { level: 'overcast',     keywords: ['陰'] },
+  { level: 'cloudy',       keywords: ['多雲'] },
+  { level: 'sunny',        keywords: ['晴'] },
+];
+const EXPOSURE_EXTRACT_PRIORITY = ['partlycloudy', 'overcast', 'cloudy', 'sunny'];
+const EXPOSURE_RANK = ['overcast', 'cloudy', 'partlycloudy', 'sunny', null];
+function extractExposureLevel(text) {
+  if (!text) return null;
+  const candidates = EXPOSURE_TAXONOMY.filter(c => c.keywords.some(kw => text.includes(kw)));
+  if (!candidates.length) return null;
+  for (const level of EXPOSURE_EXTRACT_PRIORITY) {
+    if (candidates.find(c => c.level === level)) return level;
+  }
+  return null;
+}
+
+// 統一顯示文字：體感異常優先顯示，體感正常時才顯示曝曬提醒
+function comfortStatusText(thermalLevel, exposureLevel) {
+  if (thermalLevel && thermalLevel !== 'cool') return THERMAL_TEXT[thermalLevel];
+  if (exposureLevel === 'sunny') return '天氣晴朗，午後日曬較強';
+  if (exposureLevel === 'overcast') return '今日多雲偏陰，戶外活動體感較佳';
+  if (exposureLevel === 'cloudy') return '今日多雲，戶外活動體感較佳';
+  if (exposureLevel === 'partlycloudy') return '晴時多雲，天氣穩定';
+  if (thermalLevel === 'cool') return THERMAL_TEXT.cool;
   return null;
 }
 
@@ -995,31 +1046,35 @@ function renderRankList(wlAdvice, buckets) {
   for (const e of scored) {
     const riskNote = locationRiskNote(e.label, buckets);
     const tier = riskNote ? 'risk' : 'low-risk';
-    const comfortLevel = tier === 'low-risk' ? extractComfortLevel(e.text) : null;
-    const key = `${tier}|${e.finalScore}|${riskNote ?? ''}|${comfortLevel ?? ''}`;
+    const thermalLevel = tier === 'low-risk' ? extractThermalLevel(e.text) : null;
+    const exposureLevel = tier === 'low-risk' ? extractExposureLevel(e.text) : null;
+    const key = `${tier}|${e.finalScore}|${riskNote ?? ''}|${thermalLevel ?? ''}|${exposureLevel ?? ''}`;
     let g = groups.find(g => g.key === key);
-    if (!g) { g = { key, tier, score: e.finalScore, note: riskNote, comfortLevel, labels: [] }; groups.push(g); }
+    if (!g) { g = { key, tier, score: e.finalScore, note: riskNote, thermalLevel, exposureLevel, labels: [] }; groups.push(g); }
     g.labels.push(e.label);
   }
 
   groups.sort((a, b) => {
     if (a.tier !== b.tier) return a.tier === 'low-risk' ? -1 : 1; // 風險層優先，永不被體感蓋過
     if (a.tier === 'low-risk') {
-      const ai = a.comfortLevel ? COMFORT_PRIORITY.indexOf(a.comfortLevel) : COMFORT_PRIORITY.length;
-      const bi = b.comfortLevel ? COMFORT_PRIORITY.indexOf(b.comfortLevel) : COMFORT_PRIORITY.length;
-      if (ai !== bi) return ai - bi;
+      const at = THERMAL_RANK.indexOf(a.thermalLevel);
+      const bt = THERMAL_RANK.indexOf(b.thermalLevel);
+      if (at !== bt) return at - bt;
+      const ae = a.exposureLevel ? EXPOSURE_RANK.indexOf(a.exposureLevel) : EXPOSURE_RANK.length;
+      const be = b.exposureLevel ? EXPOSURE_RANK.indexOf(b.exposureLevel) : EXPOSURE_RANK.length;
+      if (ae !== be) return ae - be;
     }
     return b.score - a.score;
   });
 
-  // 全部地點合併成同一組（同層、同分、同體感）時，七個地名逐一條列沒有
-  // 決策價值——沒有差異就不用假裝有選擇，直接說「各地皆宜」比較誠實
+  // 全部地點合併成同一組（同層、同分、同體感、同曝曬）時，七個地名逐一條列
+  // 沒有決策價值——沒有差異就不用假裝有選擇，直接說「各地皆宜」比較誠實
   const allMerged = groups.length === 1 && unscored.length === 0 && groups[0].tier === 'low-risk';
 
   const rows = allMerged ? (() => {
     const g = groups[0];
     const c = scoreToColor(g.score);
-    const status = g.comfortLevel ? COMFORT_DISPLAY_TEXT[g.comfortLevel] : null;
+    const status = comfortStatusText(g.thermalLevel, g.exposureLevel);
     const statusHtml = status ? `<div class="rank-status">${status}</div>` : '';
     return [`<div class="rank-row">
       <div class="rank-head"><span class="rank-loc">各地皆宜，任君挑選</span><span class="rank-score">${c.emoji} ${g.score}分</span></div>
@@ -1028,7 +1083,7 @@ function renderRankList(wlAdvice, buckets) {
   })() : groups.map((g, i) => {
     const medal = RANK_MEDALS[i] || `${i + 1}`;
     const c = scoreToColor(g.score);
-    const status = g.note || (g.comfortLevel ? COMFORT_DISPLAY_TEXT[g.comfortLevel] : null);
+    const status = g.note || comfortStatusText(g.thermalLevel, g.exposureLevel);
     const statusHtml = status ? `<div class="rank-status">${status}</div>` : '';
     return `<div class="rank-row">
       <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${g.labels.join('、')}</span><span class="rank-score">${c.emoji} ${g.score}分</span></div>
