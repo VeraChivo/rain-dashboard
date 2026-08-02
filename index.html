@@ -947,7 +947,20 @@ function renderRankList(wlAdvice, buckets) {
     return b.score - a.score;
   });
 
-  const rows = groups.map((g, i) => {
+  // 全部地點合併成同一組（同層、同分、同體感）時，七個地名逐一條列沒有
+  // 決策價值——沒有差異就不用假裝有選擇，直接說「各地皆宜」比較誠實
+  const allMerged = groups.length === 1 && unscored.length === 0 && groups[0].tier === 'low-risk';
+
+  const rows = allMerged ? (() => {
+    const g = groups[0];
+    const c = scoreToColor(g.score);
+    const status = g.comfortLevel ? COMFORT_DISPLAY_TEXT[g.comfortLevel] : null;
+    const statusHtml = status ? `<div class="rank-status">${status}</div>` : '';
+    return [`<div class="rank-row">
+      <div class="rank-head"><span class="rank-loc">各地皆宜，任君挑選</span><span class="rank-score">${c.emoji} ${g.score}分</span></div>
+      ${statusHtml}
+    </div>`];
+  })() : groups.map((g, i) => {
     const medal = RANK_MEDALS[i] || `${i + 1}`;
     const c = scoreToColor(g.score);
     const status = g.note || (g.comfortLevel ? COMFORT_DISPLAY_TEXT[g.comfortLevel] : null);
