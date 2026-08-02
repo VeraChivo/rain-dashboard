@@ -699,7 +699,7 @@ function summarizeBucket(bucketHours, now) {
       const rank = lvl && lvl !== 'unknown' ? SIGNAL_PRIORITY.indexOf(lvl) : SIGNAL_PRIORITY.length;
       const curRank = cur ? SIGNAL_PRIORITY.indexOf(cur.signalLevel) : Infinity;
       if (!cur || rank < curRank) {
-        byLocation[label] = { label, signalLevel: lvl, finalScore: r.risk ? r.risk.finalScore : null, startHour: r.start.getHours() };
+        byLocation[label] = { label, signalLevel: lvl, finalScore: r.risk ? r.risk.finalScore : null, startHour: r.start.getHours(), text: r.text };
       }
     }
   }
@@ -746,13 +746,70 @@ function computeDayBuckets(now) {
   return buckets;
 }
 
+// 從一組帶有 .text（WeatherDescription）的方向清單，取「多數決」體感等級，
+// 同票時取 COMFORT_PRIORITY 較前者。用於①的敘述——不只講會不會下雨，
+// 也講今天悶不悶熱、要不要防曬，這是媽媽真正想知道的資訊
+function aggregateComfortLevel(entries) {
+  const levels = entries.map(e => extractComfortLevel(e.text)).filter(Boolean);
+  if (!levels.length) return null;
+  const counts = {};
+  levels.forEach(l => { counts[l] = (counts[l] || 0) + 1; });
+  let best = null, bestCount = -1;
+  for (const level of COMFORT_PRIORITY) {
+    const cnt = counts[level] || 0;
+    if (cnt > bestCount) { best = level; bestCount = cnt; }
+  }
+  return best;
+}
+
+const COMFORT_ADJECTIVE = {
+  cool: '涼爽', overcast: '多雲偏陰', cloudy: '多雲', partlycloudy: '晴時多雲',
+  sunny: '晴朗、日照較強', muggy: '悶熱', hot: '氣溫較高',
+};
+
+// 沒有風險的時段：不再只寫「天氣穩定」，依體感給更具體的建議
+function comfortNarrativeSafeClause(bucketLabel, comfortLevel) {
+  const adj = COMFORT_ADJECTIVE[comfortLevel];
+  if (!adj) return `${bucketLabel}各地天氣穩定，適合安排外出`;
+  if (comfortLevel === 'muggy' || comfortLevel === 'hot') {
+    return `${bucketLabel}體感${adj}，建議避開長時間曝曬，適合短時間外出`;
+  }
+  return `${bucketLabel}天氣${adj}，體感較舒適，適合安排外出`;
+}
+
+// 全天無風險時的開場白：不再只回答「會不會下雨」，把體感（悶熱/涼爽/日照）
+// 一併講清楚——這才是媽媽真正想知道的「今天到底適不適合出門」
+function allSafeComfortLines(comfortLevel) {
+  if (comfortLevel === 'muggy' || comfortLevel === 'hot') {
+    const adj = COMFORT_ADJECTIVE[comfortLevel];
+    return [
+      '今天適合早上或傍晚外出。',
+      `午後體感${adj}，建議避開長時間曝曬，記得補水、防曬。`,
+    ];
+  }
+  if (comfortLevel === 'sunny') {
+    return [
+      '今天適合外出，雨勢影響低，但日照較強，記得補水、防曬。',
+      '各地皆可安排活動，任君挑選！',
+    ];
+  }
+  const adj = COMFORT_ADJECTIVE[comfortLevel];
+  if (adj) {
+    return [
+      `今天適合外出，天氣${adj}、體感較舒適，雨勢影響低，各地皆可安排活動。`,
+      '🥳 沒有明顯需要避開的時段，任君挑選！',
+    ];
+  }
+  return ['今日雨勢影響較低，各時段皆可安排外出。'];
+}
+
 // ① AI 行程建議用：跟上面同一份資料，語氣更接近一句自然的行程安排
 // 風險子句補上「幾點後」的精確起始時間（用該時段內最早出現風險的格），
 // 不再只寫「下午」這種模糊範圍
 function bucketNarrativeClause(bucketLabel, summary) {
   if (!summary) return null;
   if (summary.risky.length === 0) {
-    return `${bucketLabel}各地天氣穩定，適合安排外出`;
+    return comfortNarrativeSafeClause(bucketLabel, aggregateComfortLevel(summary.safe));
   }
   const onsetHour = Math.min(...summary.risky.map(e => e.startHour));
   const riskyNames = summary.risky.map(e => e.label).join('、');
@@ -857,7 +914,8 @@ function renderItineraryText(buckets, now) {
   // 暑假模式：沿用整天逐時段的行程敘述（親子活動安排取向）
   const allSafe = buckets.length > 1 && buckets.every(b => b.summary.risky.length === 0);
   if (allSafe) {
-    el.innerHTML = '<div class="itinerary-line">今日雨勢影響較低，各時段皆可安排外出。</div>';
+    const dayComfort = aggregateComfortLevel(buckets.flatMap(b => b.summary.safe));
+    el.innerHTML = allSafeComfortLines(dayComfort).map(l => `<div class="itinerary-line">${l}</div>`).join('');
     return;
   }
 
@@ -885,7 +943,13 @@ const COMFORT_TAXONOMY = [
   { level: 'muggy',        keywords: ['悶熱'] },
   { level: 'hot',          keywords: ['炎熱', '高溫'] },
 ];
+// 比較用優先序（哪個體感「比較好」，給排序/多數決 tie-break 用）
 const COMFORT_PRIORITY = COMFORT_TAXONOMY.map(c => c.level);
+// 抽取用優先序（同一句話裡多個關鍵字同時出現時，哪個「該贏」）
+// 雲量詞（多雲/陰/晴）跟體感溫度詞（悶熱/炎熱/高溫）是兩個不同維度，
+// CWA 常常兩者都寫（例如「多雲。...悶熱。」），這種情況體感溫度比雲量
+// 更決定「能不能出門」，所以抽取時優先判定悶熱/炎熱，而不是被雲量詞蓋掉
+const COMFORT_EXTRACT_PRIORITY = ['muggy', 'hot', 'cool', 'overcast', 'cloudy', 'partlycloudy', 'sunny'];
 const COMFORT_DISPLAY_TEXT = {
   cool: '天氣涼爽，體感相當舒適',
   overcast: '今日多雲偏陰，戶外活動體感較佳',
@@ -897,12 +961,13 @@ const COMFORT_DISPLAY_TEXT = {
 };
 
 // 跟 Signal Extractor 同樣的「候選→取最高優先」模式，避免關鍵字重疊誤判
-// （例如「晴時多雲」同時含「晴」，不能兩個都算）
+// （例如「晴時多雲」同時含「晴」，不能兩個都算；「多雲」+「悶熱」同時出現，
+// 悶熱要贏，見上方 COMFORT_EXTRACT_PRIORITY 註解）
 function extractComfortLevel(text) {
   if (!text) return null;
   const candidates = COMFORT_TAXONOMY.filter(c => c.keywords.some(kw => text.includes(kw)));
   if (!candidates.length) return null;
-  for (const level of COMFORT_PRIORITY) {
+  for (const level of COMFORT_EXTRACT_PRIORITY) {
     if (candidates.find(c => c.level === level)) return level;
   }
   return null;
