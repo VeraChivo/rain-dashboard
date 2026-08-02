@@ -67,8 +67,7 @@
   .rain-cell{border-radius:6px;font-weight:600;padding:7px 4px;min-width:48px;display:block;margin:0 auto}
 
   .ai-report{background:linear-gradient(135deg,rgba(47,111,237,.07),rgba(124,92,252,.07));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
-  .ai-report-title{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:2px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-align:center}
-  .life-mode-badge{font-size:.68rem;color:var(--muted);text-align:center;margin-bottom:10px}
+  .ai-report-title{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:10px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-align:center}
   /* ① AI 行程建議 */
   .itinerary-text{margin-bottom:14px}
   .itinerary-line{font-size:.88rem;color:var(--text);line-height:1.7;text-align:center}
@@ -150,21 +149,21 @@
   </button>
 </div>
 
-<!-- 🛵 今天出門去哪兒：三段式行程卡，取代舊的分數推薦 + 獨立雨勢提醒卡
-     ① AI 行程建議（自然語言）② 地點排序（透明度用，分數不隱藏）③ 今日注意時段 -->
+<!-- 🛵 出門去哪兒：三段式行程卡，取代舊的分數推薦 + 獨立雨勢提醒卡
+     ① AI 行程建議（自然語言）② 地點排序（透明度用，分數不隱藏）③ 注意時段
+     過 21:00 後自動切換成「明天」視角（見 updateAiReport 的 showTomorrow） -->
 <div class="ai-report" id="aiReport">
-  <div class="ai-report-title">🛵 今天出門去哪兒</div>
-  <div class="life-mode-badge" id="lifeModeBadge"></div>
+  <div class="ai-report-title">🛵 出門去哪兒</div>
 
   <div class="itinerary-text" id="itineraryText">載入中…</div>
 
   <div class="rank-section">
-    <div class="rank-section-title">📍 今日地點排序</div>
+    <div class="rank-section-title" id="rankSectionTitle">📍 今日地點排序</div>
     <div id="rankList"></div>
   </div>
 
   <div class="alert-section">
-    <div class="alert-section-title">⏰ 今日注意時段</div>
+    <div class="alert-section-title" id="alertSectionTitle">⏰ 今日注意時段</div>
     <div id="alertList"></div>
   </div>
 </div>
@@ -797,34 +796,34 @@ function comfortNarrativeSafeClause(bucketLabel, thermalLevel, exposureLevel) {
 // 全天無風險時的開場白：體感（悶不悶熱）決定要不要建議避開午後，
 // 曝曬（晴朗/多雲）只決定要不要提醒防曬，兩者不混為一談——
 // 陰天不該被當壞天氣，晴朗也不該直接等於扣分
-function allSafeComfortLines(thermalLevel, exposureLevel) {
+function allSafeComfortLines(thermalLevel, exposureLevel, dayWord) {
   if (thermalLevel === 'hot' || thermalLevel === 'muggy') {
     const word = thermalLevel === 'hot' ? '氣溫較高' : '體感悶熱';
     return [
-      '今天適合早上或傍晚外出。',
+      `${dayWord}適合早上或傍晚外出。`,
       `午後${word}，建議避開長時間曝曬，記得補水、防曬。`,
     ];
   }
   if (exposureLevel === 'sunny') {
     return [
-      '今天適合外出，雨勢影響低，但日照較強，記得補水、防曬。',
+      `${dayWord}適合外出，雨勢影響低，但日照較強，記得補水、防曬。`,
       '各地皆可安排活動，任君挑選！',
     ];
   }
   if (exposureLevel === 'overcast' || exposureLevel === 'cloudy') {
     const word = exposureLevel === 'overcast' ? '多雲偏陰' : '多雲';
     return [
-      `今天適合外出，天氣${word}、體感較舒適，雨勢影響低，各地皆可安排活動。`,
+      `${dayWord}適合外出，天氣${word}、體感較舒適，雨勢影響低，各地皆可安排活動。`,
       '🥳 沒有明顯需要避開的時段，任君挑選！',
     ];
   }
   if (thermalLevel === 'cool') {
     return [
-      '今天適合外出，天氣涼爽、體感相當舒適，雨勢影響低，各地皆可安排活動。',
+      `${dayWord}適合外出，天氣涼爽、體感相當舒適，雨勢影響低，各地皆可安排活動。`,
       '🥳 沒有明顯需要避開的時段，任君挑選！',
     ];
   }
-  return ['今日雨勢影響較低，各時段皆可安排外出。'];
+  return [`${dayWord}雨勢影響較低，各時段皆可安排外出。`];
 }
 
 // ① AI 行程建議用：跟上面同一份資料，語氣更接近一句自然的行程安排
@@ -875,14 +874,12 @@ function getLifeContextMode(now) {
   return now < SCHOOL_START_2026 ? 'summer' : 'school';
 }
 
-const LIFE_CONTEXT_LABEL = { summer: '☀️ 暑假模式', school: '🏫 上課模式' };
-
 // 上課模式只關心「接送時段」（下午）會不會下雨，不是整天行程規劃——
 // 沿用同一份 bucket 資料，只是換一種讀法
-function schoolModeClause(buckets) {
+function schoolModeClause(buckets, dayWord) {
   const afternoon = buckets.find(b => b.label === '下午');
   if (!afternoon || afternoon.summary.risky.length === 0) {
-    return '今天接送時段天氣穩定，不用特別準備雨具。';
+    return `${dayWord}接送時段天氣穩定，不用特別準備雨具。`;
   }
   const names = afternoon.summary.risky.map(e => e.label).join('、');
   const onsetHour = Math.min(...afternoon.summary.risky.map(e => e.startHour));
@@ -913,27 +910,26 @@ function cctvConfirmationClause(riskyLabels) {
   return `目前CCTV顯示${best.label}路面乾燥，尚未受影響，可先安排出門。`;
 }
 
-function renderItineraryText(buckets, now) {
+function renderItineraryText(buckets, now, showTomorrow, dayWord) {
   const el = document.getElementById('itineraryText');
-  const badgeEl = document.getElementById('lifeModeBadge');
   if (!el) return;
 
   const mode = getLifeContextMode(now);
-  if (badgeEl) badgeEl.textContent = LIFE_CONTEXT_LABEL[mode];
 
   if (buckets.length === 0) {
-    el.innerHTML = '<div class="itinerary-line">今日時段已結束，請於明日重新查看。</div>';
+    el.innerHTML = `<div class="itinerary-line">${dayWord}預報資料尚未齊全，請稍後再查看。</div>`;
     return;
   }
 
-  // 用「最早的風險時段」查 CCTV——那是最迫切需要現況確認的一段
-  const firstRiskyBucket = buckets.find(b => b.summary.risky.length > 0);
+  // 用「最早的風險時段」查 CCTV 現況——只在看「今天」時才有意義，
+  // 已經切到明天視角時，現在的路面狀況不能拿來確認明天的預報
+  const firstRiskyBucket = !showTomorrow && buckets.find(b => b.summary.risky.length > 0);
   const cctvNote = firstRiskyBucket
     ? cctvConfirmationClause(firstRiskyBucket.summary.risky.map(e => e.label))
     : null;
 
   if (mode === 'school') {
-    let text = schoolModeClause(buckets);
+    let text = schoolModeClause(buckets, dayWord);
     if (cctvNote) text += ` ${cctvNote}`;
     el.innerHTML = `<div class="itinerary-line">${text}</div>`;
     return;
@@ -945,7 +941,7 @@ function renderItineraryText(buckets, now) {
     const allEntries = buckets.flatMap(b => b.summary.safe);
     const thermalLevel = aggregateThermalLevel(allEntries);
     const exposureLevel = aggregateExposureLevel(allEntries);
-    el.innerHTML = allSafeComfortLines(thermalLevel, exposureLevel).map(l => `<div class="itinerary-line">${l}</div>`).join('');
+    el.innerHTML = allSafeComfortLines(thermalLevel, exposureLevel, dayWord).map(l => `<div class="itinerary-line">${l}</div>`).join('');
     return;
   }
 
@@ -1014,11 +1010,11 @@ function extractExposureLevel(text) {
 }
 
 // 統一顯示文字：體感異常優先顯示，體感正常時才顯示曝曬提醒
-function comfortStatusText(thermalLevel, exposureLevel) {
+function comfortStatusText(thermalLevel, exposureLevel, dayWordFormal = '今日') {
   if (thermalLevel && thermalLevel !== 'cool') return THERMAL_TEXT[thermalLevel];
   if (exposureLevel === 'sunny') return '天氣晴朗，午後日曬較強';
-  if (exposureLevel === 'overcast') return '今日多雲偏陰，戶外活動體感較佳';
-  if (exposureLevel === 'cloudy') return '今日多雲，戶外活動體感較佳';
+  if (exposureLevel === 'overcast') return `${dayWordFormal}多雲偏陰，戶外活動體感較佳`;
+  if (exposureLevel === 'cloudy') return `${dayWordFormal}多雲，戶外活動體感較佳`;
   if (exposureLevel === 'partlycloudy') return '晴時多雲，天氣穩定';
   if (thermalLevel === 'cool') return THERMAL_TEXT.cool;
   return null;
@@ -1030,9 +1026,12 @@ function comfortStatusText(thermalLevel, exposureLevel) {
 // 分數只在體感相同時當次要排序依據——體感差異比幾分之差更能反映決策價值
 const RANK_MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣'];
 
-function renderRankList(wlAdvice, buckets) {
+function renderRankList(wlAdvice, buckets, dayWordFormal) {
   const listEl = document.getElementById('rankList');
   if (!listEl) return;
+
+  const titleEl = document.getElementById('rankSectionTitle');
+  if (titleEl) titleEl.textContent = `📍 ${dayWordFormal}地點排序`;
 
   if (wlAdvice.noData) {
     listEl.innerHTML = '<div class="rank-status">資料尚未就緒</div>';
@@ -1074,7 +1073,7 @@ function renderRankList(wlAdvice, buckets) {
   const rows = allMerged ? (() => {
     const g = groups[0];
     const c = scoreToColor(g.score);
-    const status = comfortStatusText(g.thermalLevel, g.exposureLevel);
+    const status = comfortStatusText(g.thermalLevel, g.exposureLevel, dayWordFormal);
     const statusHtml = status ? `<div class="rank-status">${status}</div>` : '';
     return [`<div class="rank-row">
       <div class="rank-head"><span class="rank-loc">各地皆宜，任君挑選</span><span class="rank-score">${c.emoji} ${g.score}分</span></div>
@@ -1083,7 +1082,7 @@ function renderRankList(wlAdvice, buckets) {
   })() : groups.map((g, i) => {
     const medal = RANK_MEDALS[i] || `${i + 1}`;
     const c = scoreToColor(g.score);
-    const status = g.note || comfortStatusText(g.thermalLevel, g.exposureLevel);
+    const status = g.note || comfortStatusText(g.thermalLevel, g.exposureLevel, dayWordFormal);
     const statusHtml = status ? `<div class="rank-status">${status}</div>` : '';
     return `<div class="rank-row">
       <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${g.labels.join('、')}</span><span class="rank-score">${c.emoji} ${g.score}分</span></div>
@@ -1191,14 +1190,17 @@ function periodAlertText(period) {
 }
 
 // ③ 渲染：今日注意時段（精確時段版本，跟①②用不同粒度的同一份底層資料）
-function renderAlertList(now) {
+function renderAlertList(now, dayWord) {
   const listEl = document.getElementById('alertList');
   if (!listEl) return;
+
+  const titleEl = document.getElementById('alertSectionTitle');
+  if (titleEl) titleEl.textContent = `⏰ ${dayWord === '明天' ? '明日' : '今日'}注意時段`;
 
   const periods = computeRiskPeriods(now);
 
   if (periods.length === 0) {
-    listEl.innerHTML = '<div class="alert-text">今天暫無明顯雨勢時段，天氣宜人，適合安排外出。</div>';
+    listEl.innerHTML = `<div class="alert-text">${dayWord}暫無明顯雨勢時段，天氣宜人，適合安排外出。</div>`;
     return;
   }
 
@@ -1372,13 +1374,24 @@ function directionAdvisor(townSlots, now) {
 
 // countyData = { 'F-D0047-029': [...chiayi locs], 'F-D0047-025': [...yunlin locs] }
 // 由 fetchAll 傳入；CCTV toggle 用 cachedCountyData
-// 三段式行程卡：① AI 行程建議（自然語言）② 地點排序（透明度）③ 今日注意時段
+// 三段式行程卡：① AI 行程建議（自然語言）② 地點排序（透明度）③ 注意時段
 // 三段共用 computeDayBuckets() 同一份資料，不會出現互相矛盾的描述
+//
+// 過 21:00 後，今天已經沒有可以帶小孩出門的時段了，與其顯示「時段已結束」
+// 這種沒有決策價值的空白訊息，不如直接切換成「明天」視角——用明天 09:00
+// 當作參考時間點，讓 buckets／排序／注意時段三段自動變成明天的完整一天
 function updateAiReport(countyData) {
   const itineraryEl = document.getElementById('itineraryText');
 
   try {
     const now = new Date();
+    const showTomorrow = now.getHours() >= 21;
+    const effectiveNow = showTomorrow
+      ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 9, 0, 0)
+      : now;
+    const dayWord = showTomorrow ? '明天' : '今天';
+    const dayWordFormal = showTomorrow ? '明日' : '今日';
+
     const townSlots = {};
     for (const [label, cfg] of Object.entries(DIRECTION_TOWNS)) {
       const locs = countyData?.[cfg.dataset] || [];
@@ -1395,12 +1408,12 @@ function updateAiReport(countyData) {
       return;
     }
 
-    const wlAdvice = buildWeatherLayerAdvice(now);
-    const buckets = computeDayBuckets(now);
+    const wlAdvice = buildWeatherLayerAdvice(effectiveNow);
+    const buckets = computeDayBuckets(effectiveNow);
 
-    renderItineraryText(buckets, now);
-    renderRankList(wlAdvice, buckets);
-    renderAlertList(now);
+    renderItineraryText(buckets, effectiveNow, showTomorrow, dayWord);
+    renderRankList(wlAdvice, buckets, dayWordFormal);
+    renderAlertList(effectiveNow, dayWord);
 
     // 雨胞移動方向卡片沿用同一批 CCTV 校正過的 scores
     const rainVec = calcRainVector(cachedWindStations);
