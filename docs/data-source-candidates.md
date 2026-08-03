@@ -1,9 +1,8 @@
 # 天氣資料源 Single Source of Truth
 
-> 純紀錄用，不代表已排入實作，這份文件本身不改動 `index.html` 或任何功能程式。
-> 目標：把目前所有已確認、待驗證、已淘汰的資料源整理成唯一版本，之後每接一個
-> 資料源都要先更新這份文件再動程式，避免討論內容互相矛盾。接資料源的討論跟
-> 實際實作不要混在同一次改動裡。
+> 目標：把目前所有已確認、待驗證、已淘汰、已接入的資料源整理成唯一版本，避免
+> 討論內容互相矛盾。純討論/紀錄階段的候選不改動 `index.html`；一旦某個 Priority
+> 實際動了程式，這份文件要同步更新狀態成 ✅ 已接入，不要讓文件跟實際程式碼脫節。
 
 ## 狀態圖例
 
@@ -24,8 +23,9 @@
 
 * ✅ **F-D0047-029 / F-D0047-025** — 驅動整張「今天出門去哪兒」卡片
 * ✅ **Comfort Preference Layer v2** — 體感/曝曬雙軸，來源＝F-D0047 WeatherDescription
+* ✅ **F-D0047-027 / F-D0047-031（UV）** — Priority 1 已接入 index.html，見下方
+  「已接入：UV」段落
 * 🏆 **M-A0085-001** — 熱指數及警示，驗證程度最高的待接入候選
-* 🟢 **F-D0047-027 / F-D0047-031** — 未來1週規劃 + UV 資料源，規格已確認待接入
 * 其餘（短時雨勢預警、天氣特報、一般預報、天氣圖資）都還在待驗證或純紀錄階段，
   細節見下方各架構層
 
@@ -37,17 +37,10 @@
 不是「資料多寡」，是「會不會真的改變行程決策」，四個優先度明確排定，避免討論時
 跳來跳去：
 
-### Priority 1（最優先）：UV 接入 Comfort Preference Layer
+### Priority 1（最優先）：UV 接入 Comfort Preference Layer — ✅ 已接入
 
-開題：「討論 UV 接入 Comfort Preference Layer」
-
-目標：
-* 是否能補足「曝曬」判斷——現在晴天只有文字判斷（曝曬軸猜「晴」），沒有真正的
-  紫外線強度數值
-* 不改排序架構，只補現有資訊不足
-
-候選：F-D0047-027/031（UVIndex，主要方案，已有七鄉鎮完整覆蓋）；F-B0053 系列
-（附加方案，見下方 Activity Comfort Enhancement）
+**已實作進 `index.html`**，細節見下方「已接入：UV（Priority 1）」段落。F-B0053
+系列（Activity Comfort Enhancement，附加方案）維持未接入，不影響此項完成度。
 
 ### Priority 2：短時雨勢預警接入 Decision Explanation Layer
 
@@ -111,8 +104,8 @@ WeatherDescription 文字關鍵字抽取，啟發式判斷 |
 | M-A0085-001（熱指數及警示） | 🏆 待驗證，schema 已用真實 API 回應確認 | 官方 WBGT
 四級警示（注意/警戒/危險/高危險），`TownName` 跟 `DIRECTION_TOWNS` 完全一致，未來
 最有機會取代現有的文字關鍵字判斷（不是兩套並存），細節見下方獨立段落 |
-| F-D0047-027 / -031（UVIndex/UVExposureLevel） | 🟢 技術規格已確認 | UV 資料主要方案，
-跟已上線的 -029/-025 同源，地點沿用既有七鄉鎮，細節見下方獨立段落 |
+| F-D0047-027 / -031（UVIndex/UVExposureLevel） | ✅ 已接入 | UV 資料主要方案，
+Priority 1 已實作進 index.html，細節見下方「已接入：UV」段落 |
 | F-B0053 系列（育樂天氣預報） | 🟢 已確認真實存在，schema 待驗證 | 定位修正：不重做
 Comfort Layer 本體，改成附加的 Activity Comfort Enhancement 補強層，細節見下方獨立段落 |
 
@@ -132,8 +125,10 @@ Comfort Layer 本體，改成附加的 Activity Comfort Enhancement 補強層，
 
 | 資料源 | 狀態 | 說明 |
 |---|---|---|
-| F-D0047-027（雲林未來1週） | 🟢 技術規格已確認 | 同時是 UV 資料源，一魚兩吃 |
-| F-D0047-031（嘉義未來1週） | 🟢 技術規格已確認 | 同時是 UV 資料源，一魚兩吃 |
+| F-D0047-027（雲林未來1週） | 🟢 規格已確認（Future Planning 用途未接入） | UV 用途已接入
+（見 Comfort Preference Layer 表格），但「顯示未來1週規劃」這個 Future Planning
+Layer 本身的用途還沒做 UI |
+| F-D0047-031（嘉義未來1週） | 🟢 規格已確認（Future Planning 用途未接入） | 同上 |
 | F-C0032 系列（一週縣市/天氣小幫手文字預報） | ⬜ 待驗證 | 優先度低於上面兩個，見下方段落 |
 
 ### 不進決策流程（背景參考用）
@@ -207,20 +202,48 @@ WBGT（Wet-Bulb Globe Temperature，綜合溫度熱指數）：同時考量溫�
 
 ---
 
-## F-D0047-027 / F-D0047-031 詳細記錄
+## 已接入：UV（Priority 1）— F-D0047-027 / F-D0047-031
 
 **鄉鎮天氣預報－單一鄉鎮市區預報資料－雲林縣/嘉義縣未來1週天氣預報**
 
-架構位置：**Future Planning Layer**（主要用途）＋ **Comfort Preference Layer**（UV 資料源，附帶用途）
+架構位置：**Comfort Preference Layer**（只補曝曬文字，不改排序架構）
 
-官方技術文件確認「未來 7 天逐 12 小時與逐日預報」格式的 15 個氣象因子裡包含
-`UVIndex`（紫外線指數）跟 `UVExposureLevel`（紫外線曝曬級數）。地點結構跟已上線的
--029 / -025 完全同源（`LocationName` 是鄉鎮名稱，附 Geocode/經緯度），理論上涵蓋鄉鎮
-相同，只是預報天數從 3 天延伸到 7 天，更新頻率相同（每日 05:30/11:30/17:30/23:30）。
+狀態：✅ **已實作進 `index.html`**，隨 `fetchAll()` 一起抓取，非阻斷式（抓失敗
+不影響降雨資料主流程）。ElementName 仍是推測值，尚未用真實 API 回應 100% 核對，
+已內建防呆＋除錯機制，見下方「待確認」。
 
-**尚未 100% 確認**（技術文件是規格說明，不是實際資料內容）：還沒有實際拉過即時回應
-本體，確認 (1) 嘉義五鄉鎮/雲林兩鄉鎮是否真的都出現在 `LocationName` 清單裡 (2)
-`UVIndex`/`UVExposureLevel` 實際回傳的是有效數值。
+### 實作內容
+
+* `fetchAll()` 新增兩個非核心 fetch：`F-D0047-031`（嘉義）、`F-D0047-027`（雲林），
+  各自 `.catch()` 吞掉失敗，不會拖垮降雨資料主流程
+* `parseUVSlots(locations, townName)` — 用跟 `WEATHER_ELEMENT_NAMES` 同一套防呆
+  原則：`UVIndex`/`UVExposureLevel` 用猜測的 ElementName（`紫外線指數`／
+  `紫外線曝曬級數`）去比對，找不到就回空陣列，不會噴錯
+* `cachedUVLayers`（label → `{index, level}` 時間格陣列）+ `getCurrentUVIndex`／
+  `getCurrentUVLevel`（沿用既有 `getCurrentSlotValue` 抓「現在」對應格）
+* `representativeUV(labels, now)` — 只有 UVExposureLevel 含「高量／過量／危險」
+  才回傳，低量/中量视為不影響決策，不顯示（呼應「這個資訊會不會改變今天的行程」
+  原則）；多個方向都達標時取指數最高的代表
+* 文字加註在既有「曝曬＝晴」的兩個分支：`allSafeComfortLines`（①全天安全時的
+  開場白）跟 `comfortNarrativeSafeClause`（①逐時段敘述），例如「天氣晴朗，但
+  日照較強，紫外線指數9（過量），記得補水、防曬」；沒有高量以上時完全不提 UV，
+  跟修改前文字一致，不會多長一截看起來怪怪的空白
+* **不改動**：`THERMAL_RANK`/`EXPOSURE_RANK` 排序、②地點排序、③注意時段——
+  UV 純粹是①的文字加註
+
+### 待確認
+
+`?debug=weather` 面板新增了「UV 資料源診斷」區塊，會列出每個鄉鎮實際的
+`WeatherElement` 清單跟猜測的 ElementName 是否命中。正式上線後麻煩用手機開
+`?debug=weather` 截圖確認：
+1. `紫外線指數`／`紫外線曝曬級數` 這兩個猜測的 ElementName 是否真的存在
+2. 嘉義五鄉鎮/雲林兩鄉鎮是否都拿得到值
+3. `UVExposureLevel` 實際回傳的中文字串是不是「低量/中量/高量/過量/危險」這幾種
+   （目前 `isNotableUVLevel` 用字串包含比對「高量/過量/危險」，如果實際字串不同
+   需要調整關鍵字）
+
+若 ElementName 猜錯，UI 端會自動、安靜地不顯示任何 UV 相關文字（不會報錯、不會
+顯示奇怪空白），需要靠 debug 面板才能發現要修正。
 
 ---
 

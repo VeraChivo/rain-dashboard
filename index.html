@@ -776,15 +776,102 @@ function aggregateExposureLevel(entries) {
   return best;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// UV 資料源（Priority 1）— 補「曝曬」資訊，不改排序架構
+// 來源：F-D0047-031（嘉義未來1週）/ F-D0047-027（雲林未來1週），跟現有
+// F-D0047-029/025 同一個產品家族，只是預報天數延伸到 7 天，順帶帶了
+// UVIndex/UVExposureLevel 兩個欄位。ElementName 為推測值，尚未經真實 API
+// 回傳核對（docs/data-source-candidates.md Priority 1 標註「尚未100%確認」），
+// 找不到就回 null，不會噴錯——跟 WEATHER_ELEMENT_NAMES 同一套防呆原則，
+// 可用 ?debug=weather 核對实際欄位名稱是否猜對。
+// 只做文字加註，不產生分數、不影響 THERMAL_RANK/EXPOSURE_RANK 排序。
+// ═══════════════════════════════════════════════════════════════
+const UV_ELEMENT_NAMES = {
+  UVIndex: '紫外線指數',
+  UVExposureLevel: '紫外線曝曬級數',
+};
+
+const UV_TOWN_DATASET = {
+  新港: 'F-D0047-031', 溪口: 'F-D0047-031', 民雄: 'F-D0047-031',
+  朴子: 'F-D0047-031', 大林: 'F-D0047-031',
+  斗南: 'F-D0047-027', 北港: 'F-D0047-027',
+};
+
+let cachedUVLayers = {};
+
+function parseUVSlots(locations, townName) {
+  const loc = locations?.find(l => l.LocationName === townName);
+  if (!loc) return { index: [], level: [], _rawElementNames: [] };
+
+  const toSlots = (elementName, valueKey) => {
+    const we = loc.WeatherElement?.find(e => e.ElementName === elementName);
+    if (!we) return [];
+    return (we.Time || []).map(t => ({
+      start: new Date(t.StartTime),
+      end: new Date(t.EndTime),
+      value: t.ElementValue?.[0]?.[valueKey] ?? null,
+    })).filter(s => s.value !== null && s.value !== '');
+  };
+
+  return {
+    index: toSlots(UV_ELEMENT_NAMES.UVIndex, 'UVIndex'),
+    level: toSlots(UV_ELEMENT_NAMES.UVExposureLevel, 'UVExposureLevel'),
+    _rawElementNames: loc.WeatherElement?.map(e => e.ElementName) ?? [],
+  };
+}
+
+function buildUVLayers(uvCountyData) {
+  const result = {};
+  for (const [label, cfg] of Object.entries(DIRECTION_TOWNS)) {
+    const locs = uvCountyData?.[UV_TOWN_DATASET[label]] || [];
+    result[label] = parseUVSlots(locs, cfg.town);
+  }
+  return result;
+}
+
+function getCurrentUVIndex(label, now) {
+  const slots = cachedUVLayers[label]?.index;
+  return slots && slots.length ? getCurrentSlotValue(slots, now) : null;
+}
+function getCurrentUVLevel(label, now) {
+  const slots = cachedUVLayers[label]?.level;
+  return slots && slots.length ? getCurrentSlotValue(slots, now) : null;
+}
+
+// 只有「高量」以上才顯示——低量/中量不影響要不要出門、要不要防曬的決定，
+// 顯示了也只是雜訊（呼應「這個資訊會不會改變今天的行程」原則）
+const UV_NOTABLE_KEYWORDS = ['高量', '過量', '危險'];
+function isNotableUVLevel(level) {
+  return !!level && UV_NOTABLE_KEYWORDS.some(k => level.includes(k));
+}
+
+// 從一組方向裡找「最嚴重」的紫外線等級代表整體，用來加註在既有的曝曬提醒後面；
+// 資料源未驗證成功、或沒有方向達到高量以上時回 null，UI 端就完全不提 UV
+function representativeUV(labels, now) {
+  let best = null;
+  for (const label of labels) {
+    const level = getCurrentUVLevel(label, now);
+    if (!isNotableUVLevel(level)) continue;
+    const index = getCurrentUVIndex(label, now);
+    if (best === null || (index ?? 0) > (best.index ?? 0)) best = { index, level };
+  }
+  return best;
+}
+
+function uvSuffix(uvInfo) {
+  if (!uvInfo) return '';
+  return uvInfo.index !== null ? `，紫外線指數${uvInfo.index}（${uvInfo.level}）` : `，紫外線${uvInfo.level}`;
+}
+
 // 沒有風險的時段：體感異常（悶熱/高溫）優先講，其次才是曝曬提醒，
 // 兩者都沒有才是單純「天氣穩定」
-function comfortNarrativeSafeClause(bucketLabel, thermalLevel, exposureLevel) {
+function comfortNarrativeSafeClause(bucketLabel, thermalLevel, exposureLevel, uvInfo) {
   if (thermalLevel === 'hot' || thermalLevel === 'muggy') {
     const word = thermalLevel === 'hot' ? '氣溫較高' : '悶熱';
     return `${bucketLabel}體感${word}，建議避開長時間曝曬，適合短時間外出`;
   }
   if (exposureLevel === 'sunny') {
-    return `${bucketLabel}天氣晴朗、日照較強，適合外出但建議防曬`;
+    return `${bucketLabel}天氣晴朗、日照較強${uvSuffix(uvInfo)}，適合外出但建議防曬`;
   }
   if (exposureLevel === 'overcast' || exposureLevel === 'cloudy') {
     const word = exposureLevel === 'overcast' ? '多雲偏陰' : '多雲';
@@ -796,7 +883,7 @@ function comfortNarrativeSafeClause(bucketLabel, thermalLevel, exposureLevel) {
 // 全天無風險時的開場白：體感（悶不悶熱）決定要不要建議避開午後，
 // 曝曬（晴朗/多雲）只決定要不要提醒防曬，兩者不混為一談——
 // 陰天不該被當壞天氣，晴朗也不該直接等於扣分
-function allSafeComfortLines(thermalLevel, exposureLevel, dayWord) {
+function allSafeComfortLines(thermalLevel, exposureLevel, dayWord, uvInfo) {
   if (thermalLevel === 'hot' || thermalLevel === 'muggy') {
     const word = thermalLevel === 'hot' ? '氣溫較高' : '體感悶熱';
     return [
@@ -806,7 +893,7 @@ function allSafeComfortLines(thermalLevel, exposureLevel, dayWord) {
   }
   if (exposureLevel === 'sunny') {
     return [
-      `${dayWord}適合外出，雨勢影響低，但日照較強，記得補水、防曬。`,
+      `${dayWord}適合外出，雨勢影響低，但日照較強${uvSuffix(uvInfo)}，記得補水、防曬。`,
       '各地皆可安排活動，任君挑選！',
     ];
   }
@@ -829,13 +916,15 @@ function allSafeComfortLines(thermalLevel, exposureLevel, dayWord) {
 // ① AI 行程建議用：跟上面同一份資料，語氣更接近一句自然的行程安排
 // 風險子句補上「幾點後」的精確起始時間（用該時段內最早出現風險的格），
 // 不再只寫「下午」這種模糊範圍
-function bucketNarrativeClause(bucketLabel, summary) {
+function bucketNarrativeClause(bucketLabel, summary, now) {
   if (!summary) return null;
   if (summary.risky.length === 0) {
+    const safeLabels = summary.safe.map(e => e.label);
     return comfortNarrativeSafeClause(
       bucketLabel,
       aggregateThermalLevel(summary.safe),
-      aggregateExposureLevel(summary.safe)
+      aggregateExposureLevel(summary.safe),
+      representativeUV(safeLabels, now)
     );
   }
   const onsetHour = Math.min(...summary.risky.map(e => e.startHour));
@@ -941,11 +1030,12 @@ function renderItineraryText(buckets, now, showTomorrow, dayWord) {
     const allEntries = buckets.flatMap(b => b.summary.safe);
     const thermalLevel = aggregateThermalLevel(allEntries);
     const exposureLevel = aggregateExposureLevel(allEntries);
-    el.innerHTML = allSafeComfortLines(thermalLevel, exposureLevel, dayWord).map(l => `<div class="itinerary-line">${l}</div>`).join('');
+    const uvInfo = representativeUV(allEntries.map(e => e.label), now);
+    el.innerHTML = allSafeComfortLines(thermalLevel, exposureLevel, dayWord, uvInfo).map(l => `<div class="itinerary-line">${l}</div>`).join('');
     return;
   }
 
-  const clauses = buckets.map(b => bucketNarrativeClause(b.label, b.summary)).filter(Boolean);
+  const clauses = buckets.map(b => bucketNarrativeClause(b.label, b.summary, now)).filter(Boolean);
   const lines = clauses.map(c => `<div class="itinerary-line">${c}。</div>`);
   if (cctvNote) lines.push(`<div class="itinerary-line cctv-confirm-line">${cctvNote}</div>`);
   el.innerHTML = lines.join('');
@@ -1337,6 +1427,29 @@ function renderDebugWeatherPanel() {
     lines.push('');
   }
 
+  // Priority 1 驗證：UV 資料源（F-D0047-031/027）ElementName 猜測是否正確
+  lines.push('═══ UV 資料源診斷（Priority 1，F-D0047-031/027） ═══', '');
+  for (const [label, cfg] of Object.entries(DIRECTION_TOWNS)) {
+    const uv = cachedUVLayers[label];
+    lines.push(`── ${label}（${cfg.town} / ${UV_TOWN_DATASET[label]}）`);
+    if (!uv) {
+      lines.push('  ⚠ 尚未載入資料');
+      lines.push('');
+      continue;
+    }
+    lines.push('  實際 ElementName 清單:');
+    lines.push('  ' + JSON.stringify(uv._rawElementNames));
+    lines.push(`  ${uv.index.length ? '✅' : '❌'} UVIndex（猜測:"${UV_ELEMENT_NAMES.UVIndex}"）→ ${uv.index.length}筆`);
+    lines.push(`  ${uv.level.length ? '✅' : '❌'} UVExposureLevel（猜測:"${UV_ELEMENT_NAMES.UVExposureLevel}"）→ ${uv.level.length}筆`);
+    if (uv.index.length) {
+      lines.push('  前3筆 UVIndex: ' + JSON.stringify(uv.index.slice(0, 3).map(s => ({ start: s.start.toISOString(), value: s.value }))));
+    }
+    if (uv.level.length) {
+      lines.push('  前3筆 UVExposureLevel: ' + JSON.stringify(uv.level.slice(0, 3).map(s => ({ start: s.start.toISOString(), value: s.value }))));
+    }
+    lines.push('');
+  }
+
   panel.textContent = lines.join('\n');
 }
 
@@ -1705,10 +1818,13 @@ async function fetchAll() {
   updateDateBadge();
 
   try {
-    const [chiayi, yunlin, windStations] = await Promise.all([
+    const [chiayi, yunlin, windStations, chiayiUV, yunlinUV] = await Promise.all([
       fetchCounty('F-D0047-029'),
       fetchCounty('F-D0047-025'),
       fetchWindObs().catch(e => { console.warn('[wind obs]', e.message); return []; }),
+      // UV 資料源非核心必要資料，抓失敗不能拖垮整個 fetchAll——降雨資料才是主體
+      fetchCounty('F-D0047-031').catch(e => { console.warn('[UV 嘉義]', e.message); return []; }),
+      fetchCounty('F-D0047-027').catch(e => { console.warn('[UV 雲林]', e.message); return []; }),
     ]);
     cachedWindStations = windStations;
 
@@ -1720,6 +1836,13 @@ async function fetchAll() {
       cachedWeatherLayers = buildAllWeatherLayers(cachedCountyData);
     } catch (e) {
       console.warn('[P0 weatherLayer]', e.message);
+    }
+
+    // UV 資料同樣靜默重算，抓不到/欄位對不上就是空陣列，不影響其他功能
+    try {
+      cachedUVLayers = buildUVLayers({ 'F-D0047-031': chiayiUV, 'F-D0047-027': yunlinUV });
+    } catch (e) {
+      console.warn('[UV layer]', e.message);
     }
 
     const allData = {};
