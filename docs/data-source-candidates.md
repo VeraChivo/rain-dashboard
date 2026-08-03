@@ -34,23 +34,44 @@
 ## 下一輪討論優先順序
 
 文件收斂完成後，下一輪不用重新盤點全部資料，直接從下面其中一項開題即可。排序依據
-不是「資料多寡」，是「會不會真的改變行程決策」：
+不是「資料多寡」，是「會不會真的改變行程決策」，四個優先度明確排定，避免討論時
+跳來跳去：
 
-1. **UV / 曝曬補強** → 開題：「討論 UV 接入 Comfort Preference Layer」
-   現在晴天只有文字判斷（曝曬軸猜「晴」），沒有真正的紫外線強度數值，會直接影響
-   「戶外要不要出去、幾點出去」。候選：F-D0047-027/031（UVIndex，主要方案，已有
-   七鄉鎮完整覆蓋）；F-B0053 系列（附加方案，見下方 Activity Comfort Enhancement）。
+### Priority 1（最優先）：UV 接入 Comfort Preference Layer
 
-2. **短時雨勢** → 開題：「討論短時雨勢接入 Decision Explanation Layer」
-   目前缺「1～3小時內變化」，會影響「現在出門還是延後」。架構上這是**文字修飾層**，
-   跟 CCTV 現況確認同一種定位——不碰 Risk Score、不碰排序，只修飾①的敘述文字，不是
-   Weather Risk Layer 的一部分。候選代碼還沒找到（F-B0046-001 已確認無效）。
+開題：「討論 UV 接入 Comfort Preference Layer」
 
-3. **熱指數 / 體感數值** → 開題：「討論 M-A0085-001 接入 Comfort Preference Layer」
-   補強嘉義夏季情境，但要避免跟現有 Thermal 文字判斷（WeatherDescription 關鍵字）
-   重疊或矛盾——如果採用，架構上應該是**取代**現有啟發式判斷，不是兩套同時跑。
+目標：
+* 是否能補足「曝曬」判斷——現在晴天只有文字判斷（曝曬軸猜「晴」），沒有真正的
+  紫外線強度數值
+* 不改排序架構，只補現有資訊不足
 
-4. **Future Planning Layer** → 等今天決策穩定後再擴，優先度最低。
+候選：F-D0047-027/031（UVIndex，主要方案，已有七鄉鎮完整覆蓋）；F-B0053 系列
+（附加方案，見下方 Activity Comfort Enhancement）
+
+### Priority 2：短時雨勢預警接入 Decision Explanation Layer
+
+開題：「討論短時雨勢接入 Decision Explanation Layer」
+
+目標：
+* 只改①文案，不碰 Risk Score、不碰②排序——跟 CCTV 現況確認同一種定位，不是
+  Weather Risk Layer 的一部分
+* 提供「提前 30～90 分鐘」的行程提醒，回答「現在出門還是延後」
+
+候選代碼還沒找到（F-B0046-001 已確認無效，`O-A0059-001` 待實測）
+
+### Priority 3：熱指數／體感數值（M-A0085-001）接入 Comfort Preference Layer
+
+開題：「討論 M-A0085-001 接入 Comfort Preference Layer」
+
+目標：
+* 補強嘉義夏季「熱但不一定曬」的判斷
+* 避免與現有 Thermal 軸重複——若採用，架構上應該是**取代**現有的
+  WeatherDescription 關鍵字啟發式判斷，不是兩套同時跑
+
+### Priority 4：Future Planning Layer
+
+等今天決策穩定後再擴，優先度最低，暫不開題。
 
 ---
 
