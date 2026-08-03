@@ -23,8 +23,8 @@
 
 * ✅ **F-D0047-029 / F-D0047-025** — 驅動整張「今天出門去哪兒」卡片
 * ✅ **Comfort Preference Layer v2** — 體感/曝曬雙軸，來源＝F-D0047 WeatherDescription
-* ✅ **F-D0047-027 / F-D0047-031（UV）** — Priority 1 已接入 index.html，見下方
-  「已接入：UV」段落
+* ✅ **F-D0047-027 / F-D0047-031（UV）** — Priority 1 已接入且已用真實 API 驗證
+  （UVIndex 猜對，UVExposureLevel 猜錯已修正為數值換算），見下方「已接入：UV」段落
 * 🏆 **M-A0085-001** — 熱指數及警示，驗證程度最高的待接入候選
 * 其餘（短時雨勢預警、天氣特報、一般預報、天氣圖資）都還在待驗證或純紀錄階段，
   細節見下方各架構層
@@ -208,42 +208,50 @@ WBGT（Wet-Bulb Globe Temperature，綜合溫度熱指數）：同時考量溫�
 
 架構位置：**Comfort Preference Layer**（只補曝曬文字，不改排序架構）
 
-狀態：✅ **已實作進 `index.html`**，隨 `fetchAll()` 一起抓取，非阻斷式（抓失敗
-不影響降雨資料主流程）。ElementName 仍是推測值，尚未用真實 API 回應 100% 核對，
-已內建防呆＋除錯機制，見下方「待確認」。
+狀態：✅ **已實作進 `index.html`，且已用真實 API 回應驗證過**（`?debug=weather`
+實測，2026-08-03）。
+
+### 真實驗證結果
+
+用手機截圖 `?debug=weather` 面板核對，七鄉鎮全數確認：
+
+* ✅ `UVIndex` ElementName 猜對了——真實欄位就叫「紫外線指數」，7 筆/鄉鎮，
+  實測值 9、10、9（8 月嘉義的真實高 UV，剛好是這個功能該發揮作用的情境）
+* ❌ `UVExposureLevel` 猜錯了——這個資料集**根本沒有這個欄位**（真實
+  ElementName 清單裡沒有「曝曬級數」相關項目）。技術文件描述的 15 欄位規格
+  跟這個 endpoint 實際回傳的欄位不是同一回事，文件是規格說明，不是保證
+* **修正**：拿掉對 `UVExposureLevel` 的依賴，改成用 `UVIndex` 數值直接換算
+  CWA/WHO 標準等級（`uvIndexToLevel`：0-2低量／3-5中量／6-7高量／8-10過量／
+  11+危險），`getCurrentUVLevel` 優先讀資料集自帶的 level（若未來哪個資料集
+  真的有這欄位），沒有就退而用數值換算，兩條路徑並存
+* 順手修掉一個潛在 bug：`representativeUV` 原本直接比較字串大小
+  （`"9" > "10"` 在字串比較下是 `true`，因為 `'9'` 的字元碼比 `'1'` 大），
+  改成先轉數字再比較，這個問題如果沒改，指數 9 分的地方會誤蓋過指數 10
+  分的地方成為代表值
 
 ### 實作內容
 
 * `fetchAll()` 新增兩個非核心 fetch：`F-D0047-031`（嘉義）、`F-D0047-027`（雲林），
   各自 `.catch()` 吞掉失敗，不會拖垮降雨資料主流程
-* `parseUVSlots(locations, townName)` — 用跟 `WEATHER_ELEMENT_NAMES` 同一套防呆
-  原則：`UVIndex`/`UVExposureLevel` 用猜測的 ElementName（`紫外線指數`／
-  `紫外線曝曬級數`）去比對，找不到就回空陣列，不會噴錯
+* `parseUVSlots(locations, townName)` — 沿用 `WEATHER_ELEMENT_NAMES` 同一套防呆
+  原則，找不到就回空陣列，不會噴錯
 * `cachedUVLayers`（label → `{index, level}` 時間格陣列）+ `getCurrentUVIndex`／
   `getCurrentUVLevel`（沿用既有 `getCurrentSlotValue` 抓「現在」對應格）
-* `representativeUV(labels, now)` — 只有 UVExposureLevel 含「高量／過量／危險」
-  才回傳，低量/中量视為不影響決策，不顯示（呼應「這個資訊會不會改變今天的行程」
-  原則）；多個方向都達標時取指數最高的代表
+* `representativeUV(labels, now)` — 只有換算後等級達「高量／過量／危險」才回傳，
+  低量/中量視為不影響決策，不顯示（呼應「這個資訊會不會改變今天的行程」原則）；
+  多個方向都達標時取指數最高的代表
 * 文字加註在既有「曝曬＝晴」的兩個分支：`allSafeComfortLines`（①全天安全時的
   開場白）跟 `comfortNarrativeSafeClause`（①逐時段敘述），例如「天氣晴朗，但
-  日照較強，紫外線指數9（過量），記得補水、防曬」；沒有高量以上時完全不提 UV，
-  跟修改前文字一致，不會多長一截看起來怪怪的空白
-* **不改動**：`THERMAL_RANK`/`EXPOSURE_RANK` 排序、②地點排序、③注意時段——
-  UV 純粹是①的文字加註
+  日照較強，紫外線指數9（過量），記得補水、防曬」；沒有高量以上時完全不提 UV
+* **設計原則（使用者確認保留）：UV 不是排序因素，只是 Decision Explanation
+  補充**——不改動 `THERMAL_RANK`/`EXPOSURE_RANK` 排序、②地點排序、③注意時段，
+  避免又變回「天氣評分網站」，維持「幫你決定今天怎麼出門」的定位
 
-### 待確認
+### 測試
 
-`?debug=weather` 面板新增了「UV 資料源診斷」區塊，會列出每個鄉鎮實際的
-`WeatherElement` 清單跟猜測的 ElementName 是否命中。正式上線後麻煩用手機開
-`?debug=weather` 截圖確認：
-1. `紫外線指數`／`紫外線曝曬級數` 這兩個猜測的 ElementName 是否真的存在
-2. 嘉義五鄉鎮/雲林兩鄉鎮是否都拿得到值
-3. `UVExposureLevel` 實際回傳的中文字串是不是「低量/中量/高量/過量/危險」這幾種
-   （目前 `isNotableUVLevel` 用字串包含比對「高量/過量/危險」，如果實際字串不同
-   需要調整關鍵字）
-
-若 ElementName 猜錯，UI 端會自動、安靜地不顯示任何 UV 相關文字（不會報錯、不會
-顯示奇怪空白），需要靠 debug 面板才能發現要修正。
+mock 資料涵蓋：ElementName 猜對/猜錯的防呆、真實資料形狀（有 UVIndex 無
+UVExposureLevel）端到端、數值比較 bug 迴歸測試、文案組合、graceful degrade，
+共 29 項單元測試全過，並重跑 comfort/tomorrow 既有回歸測試確認無破壞。
 
 ---
 

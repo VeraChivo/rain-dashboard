@@ -777,19 +777,34 @@ function aggregateExposureLevel(entries) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// UV 資料源（Priority 1）— 補「曝曬」資訊，不改排序架構
+// UV 資料源（Priority 1）— 補「曝曬」資訊，不改排序架構、只做 Decision
+// Explanation 補充文字，不是排序因素——避免又變回「天氣評分網站」
 // 來源：F-D0047-031（嘉義未來1週）/ F-D0047-027（雲林未來1週），跟現有
-// F-D0047-029/025 同一個產品家族，只是預報天數延伸到 7 天，順帶帶了
-// UVIndex/UVExposureLevel 兩個欄位。ElementName 為推測值，尚未經真實 API
-// 回傳核對（docs/data-source-candidates.md Priority 1 標註「尚未100%確認」），
-// 找不到就回 null，不會噴錯——跟 WEATHER_ELEMENT_NAMES 同一套防呆原則，
-// 可用 ?debug=weather 核對实際欄位名稱是否猜對。
-// 只做文字加註，不產生分數、不影響 THERMAL_RANK/EXPOSURE_RANK 排序。
+// F-D0047-029/025 同一個產品家族。已用 ?debug=weather 實測確認：
+// 「紫外線指數」ElementName 猜對了（真實回傳，例：9、10）；「紫外線曝曬
+// 級數」猜錯了——這個資料集根本沒有這個欄位（技術文件描述的規格 ≠ 這個
+// 特定 endpoint 實際回傳的欄位）。改成直接用 UVIndex 數值換算等級文字
+// （CWA/WHO 標準 UV 指數分級），不依賴 UVExposureLevel 是否存在。
 // ═══════════════════════════════════════════════════════════════
 const UV_ELEMENT_NAMES = {
   UVIndex: '紫外線指數',
-  UVExposureLevel: '紫外線曝曬級數',
+  UVExposureLevel: '紫外線曝曬級數', // 實測不存在，保留猜測供未來其他資料集比對用
 };
+
+// CWA/WHO 標準 UV 指數分級，由高到低比對
+const UV_LEVEL_THRESHOLDS = [
+  { min: 11, label: '危險' },
+  { min: 8,  label: '過量' },
+  { min: 6,  label: '高量' },
+  { min: 3,  label: '中量' },
+  { min: 0,  label: '低量' },
+];
+function uvIndexToLevel(indexValue) {
+  const n = Number(indexValue);
+  if (Number.isNaN(n)) return null;
+  const hit = UV_LEVEL_THRESHOLDS.find(t => n >= t.min);
+  return hit ? hit.label : null;
+}
 
 const UV_TOWN_DATASET = {
   新港: 'F-D0047-031', 溪口: 'F-D0047-031', 民雄: 'F-D0047-031',
@@ -831,11 +846,17 @@ function buildUVLayers(uvCountyData) {
 
 function getCurrentUVIndex(label, now) {
   const slots = cachedUVLayers[label]?.index;
-  return slots && slots.length ? getCurrentSlotValue(slots, now) : null;
+  const raw = slots && slots.length ? getCurrentSlotValue(slots, now) : null;
+  return raw !== null ? Number(raw) : null;
 }
+// 優先用資料集自帶的 UVExposureLevel（若存在）；F-D0047-031/027 實測沒有
+// 這個欄位，退而用 UVIndex 數值換算——兩條路徑都可能回 null
 function getCurrentUVLevel(label, now) {
   const slots = cachedUVLayers[label]?.level;
-  return slots && slots.length ? getCurrentSlotValue(slots, now) : null;
+  const raw = slots && slots.length ? getCurrentSlotValue(slots, now) : null;
+  if (raw !== null) return raw;
+  const index = getCurrentUVIndex(label, now);
+  return index !== null ? uvIndexToLevel(index) : null;
 }
 
 // 只有「高量」以上才顯示——低量/中量不影響要不要出門、要不要防曬的決定，
@@ -846,13 +867,14 @@ function isNotableUVLevel(level) {
 }
 
 // 從一組方向裡找「最嚴重」的紫外線等級代表整體，用來加註在既有的曝曬提醒後面；
-// 資料源未驗證成功、或沒有方向達到高量以上時回 null，UI 端就完全不提 UV
+// 資料源未驗證成功、或沒有方向達到高量以上時回 null，UI 端就完全不提 UV。
+// 只用來決定顯示文字，不是排序因素——不影響②地點排序、不產生分數
 function representativeUV(labels, now) {
   let best = null;
   for (const label of labels) {
     const level = getCurrentUVLevel(label, now);
     if (!isNotableUVLevel(level)) continue;
-    const index = getCurrentUVIndex(label, now);
+    const index = getCurrentUVIndex(label, now); // 已是 Number，比大小才不會踩字串比較的坑
     if (best === null || (index ?? 0) > (best.index ?? 0)) best = { index, level };
   }
   return best;
@@ -1446,6 +1468,9 @@ function renderDebugWeatherPanel() {
     }
     if (uv.level.length) {
       lines.push('  前3筆 UVExposureLevel: ' + JSON.stringify(uv.level.slice(0, 3).map(s => ({ start: s.start.toISOString(), value: s.value }))));
+    } else if (uv.index.length) {
+      lines.push('  ↳ 無 UVExposureLevel 欄位，改用 UVIndex 換算等級（現在: ' +
+        (getCurrentUVLevel(label, new Date()) ?? '—') + '）');
     }
     lines.push('');
   }
