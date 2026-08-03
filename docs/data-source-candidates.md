@@ -60,14 +60,30 @@
 
 候選代碼還沒找到（F-B0046-001 已確認無效，`O-A0059-001` 待實測）
 
-### Priority 3：熱指數／體感數值（M-A0085-001）接入 Comfort Preference Layer
+### Priority 3：評估 M-A0085-001 是否取代現有 Thermal 判斷
 
 開題：「討論 M-A0085-001 接入 Comfort Preference Layer」
 
-目標：
-* 補強嘉義夏季「熱但不一定曬」的判斷
-* 避免與現有 Thermal 軸重複——若採用，架構上應該是**取代**現有的
-  WeatherDescription 關鍵字啟發式判斷，不是兩套同時跑
+**不預設答案是取代**——目前還沒驗證過 M-A0085-001 的資料品質，流程分兩步：
+
+1. **先驗證資料品質**
+   * 更新頻率
+   * 覆蓋範圍（嘉義七鄉鎮是否都有）
+   * 是否比現有 WeatherDescription 更穩定
+2. **再決定**，三選一：
+   * A. 完全取代現有 Thermal 軸（WeatherDescription 關鍵字啟發式判斷）
+   * B. 補強 Thermal（兩者並存，各自負責不同情境）
+   * C. 不採用，維持現狀
+
+```text
+Priority 3
+評估 M-A0085-001 熱指數
+        ↓
+      驗證
+        ↓
+     決定：
+A. 取代 Thermal / B. 補強 Thermal / C. 不採用
+```
 
 ### Priority 4：Future Planning Layer
 
