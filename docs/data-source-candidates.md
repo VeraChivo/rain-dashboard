@@ -25,8 +25,8 @@
 * ✅ **Comfort Preference Layer v2** — 體感/曝曬雙軸，來源＝F-D0047 WeatherDescription
 * ✅ **F-D0047-027 / F-D0047-031（UV）** — Priority 1 已接入且已用真實 API 驗證
   （UVIndex 猜對，UVExposureLevel 猜錯已修正為數值換算），見下方「已接入：UV」段落
-* 🟡 **M-A0085-001** — Priority 3 進行中，schema 已驗證，七地同時段比較資料
-  收集中，還沒決定要不要取代現有 Thermal 判斷
+* ✅ **M-A0085-001** — Priority 3 已決定並實作（決定B：補強 Thermal，不取代），
+  見下方「Priority 3」段落
 * 🟢 **F-B0046-001** — Priority 2（Short Rain Forecast Layer），已用真實 JSON
   驗證資料本體，決策規則（門檻/取值方式）未定，見下方段落
 * 🟡 **O-A0059-001** — 保留研究，不接（原始雷達回波，需自己做移動推算）
@@ -106,30 +106,50 @@ F-B0046： 鄉鎮座標 → 換算格點 → 解析247,401個值 → 取最近�
 比較，決定 Thermal Layer 要不要升級），F-B0046 的第二階段設計（上面三個未決
 問題）之後再排。
 
-### Priority 3：評估 M-A0085-001 是否取代現有 Thermal 判斷
+### Priority 3：評估 M-A0085-001 是否取代現有 Thermal 判斷 — ✅ 已決定並實作（決定 B）
 
-開題：「討論 M-A0085-001 接入 Comfort Preference Layer」
+**驗證結果**：實測 `2026-08-06 12:00:00` 七鄉鎮同時段對照：
 
-**不預設答案是取代**——目前還沒驗證過 M-A0085-001 的資料品質，流程分兩步：
+| 地點 | HeatInjuryIndex | HeatInjuryWarning |
+|---|---|---|
+| 新港 | 33 | 警戒 |
+| 溪口 | 32 | 警戒 |
+| 民雄 | 32 | 警戒（推測，未逐一確認文字） |
+| 朴子 | 33 | 警戒 |
+| 大林 | 32 | 警戒（推測） |
+| 北港 | 32 | 警戒（推測） |
+| 斗南 | 32 | 警戒（推測） |
 
-1. **先驗證資料品質**
-   * 更新頻率
-   * 覆蓋範圍（嘉義七鄉鎮是否都有）
-   * 是否比現有 WeatherDescription 更穩定
-2. **再決定**，三選一：
-   * A. 完全取代現有 Thermal 軸（WeatherDescription 關鍵字啟發式判斷）
-   * B. 補強 Thermal（兩者並存，各自負責不同情境）
-   * C. 不採用，維持現狀
+同一時段既有 Thermal 軸（WeatherDescription 關鍵字）七地全部命中「悶熱」，完全沒有
+地點差異；M-A0085 至少能看出新港/朴子（33）略高於其他五地（32），數值上有意義，
+但只驗證過一天一個時間點，穩定度證據還不足以支撐「完全取代」。
 
-```text
-Priority 3
-評估 M-A0085-001 熱指數
-        ↓
-      驗證
-        ↓
-     決定：
-A. 取代 Thermal / B. 補強 Thermal / C. 不採用
-```
+**決定：B — 補強 Thermal（兩者並存，不取代）**。理由：風險最低，不動既有已驗證
+穩定的 Thermal 判斷，只在 M-A0085 真的達到「警戒」以上時額外加一句具體警示。
+
+**已實作進 `index.html`**：
+
+* `fetchHeatInjury()` — M-A0085-001 是全國單一資料集（一次抓取涵蓋所有縣市），
+  跟 F-D0047 按縣市分開查不同，`extractAllCountyLocations()` 負責合併所有
+  `CountyName` 底下的 `Location`
+* `cachedHeatInjuryLayers` + `getCurrentHeatWarning`／`representativeHeatWarning`——
+  只有達「警戒／危險／高危險」才回傳，`isNotableHeatWarning` 把「注意」跟空字串
+  都視為不影響決策，不顯示
+* `heatWarningClause` 產生「⚠️ 新港、溪口一帶熱傷害風險達警戒，建議避開長時間
+  戶外活動」這種列出所有達標地點的句子，加在①的最後一行（跟 CCTV 現況確認同一種
+  「額外一行」的呈現方式），三個分支（上課模式／全天安全／逐時段敘述）都會顯示
+* **不改動**：既有 Thermal 軸（WeatherDescription 關鍵字判斷）、
+  `THERMAL_RANK`/`EXPOSURE_RANK` 排序、②地點排序、③注意時段（本次未擴充到③，
+  之後如果要做，是把 `representativeHeatWarning` 的結果併進 `computeRiskPeriods`
+  同一份 alert 清單，需要另外設計，這裡先不做）
+* `fetchAll()` 抓取非阻斷式（`.catch()` 包起來），跟 UV 同樣的模式，抓失敗
+  不影響降雨資料主流程
+* `?debug=weather` 面板新增「熱傷害指數診斷」區塊，列出每個鄉鎮實際載入的
+  時間格數量、現在對應格的 Index/Warning，供之後用手機截圖核對真實資料
+
+**測試**：27 項單元測試（含合併多縣市、IssueTime 時區解析、防呆、代表值挑選、
+文案格式化）全過，並用使用者實測的七地真實數值跑過一次端到端驗證，輸出結果
+跟預期完全一致；重跑既有 comfort/tomorrow/UV 回歸測試確認無破壞。
 
 ### Priority 4：Future Planning Layer
 
@@ -154,9 +174,9 @@ A. 取代 Thermal / B. 補強 Thermal / C. 不採用
 |---|---|---|
 | Comfort Preference Layer v2 | ✅ 已使用 | 體感軸＋曝曬軸雙軸，來源是 F-D0047 的
 WeatherDescription 文字關鍵字抽取，啟發式判斷 |
-| M-A0085-001（熱指數及警示） | 🏆 待驗證，schema 已用真實 API 回應確認 | 官方 WBGT
-四級警示（注意/警戒/危險/高危險），`TownName` 跟 `DIRECTION_TOWNS` 完全一致，未來
-最有機會取代現有的文字關鍵字判斷（不是兩套並存），細節見下方獨立段落 |
+| M-A0085-001（熱指數及警示） | ✅ 已接入（決定B：補強不取代） | 官方 WBGT 四級
+警示（注意/警戒/危險/高危險），達「警戒」以上時額外加一句提醒，既有 Thermal 軸
+不動，細節見下方 Priority 3 段落 |
 | F-D0047-027 / -031（UVIndex/UVExposureLevel） | ✅ 已接入 | UV 資料主要方案，
 Priority 1 已實作進 index.html，細節見下方「已接入：UV」段落 |
 | F-B0053 系列（育樂天氣預報） | 🟢 已確認真實存在，schema 待驗證 | 定位修正：不重做
@@ -192,13 +212,13 @@ Layer 本身的用途還沒做 UI |
 
 ---
 
-## 🏆 M-A0085-001 詳細記錄
+## ✅ M-A0085-001 詳細記錄（已接入）
 
 **健康氣象－熱指數及警示全台各鄉鎮五日逐三小時預報**
 
-架構位置：**Comfort Preference Layer**（未來可能取代/強化體感軸）
+架構位置：**Comfort Preference Layer**（補強，不取代——決定 B，見 Priority 3 段落）
 
-本文件唯一一個不只看技術文件、有真實 API 回應佐證的候選。
+Priority 3 已完成決策並實作，這裡保留原始資料調查記錄。
 
 ### 指數說明
 
@@ -247,11 +267,8 @@ WBGT（Wet-Bulb Globe Temperature，綜合溫度熱指數）：同時考量溫�
 不用做任何座標比對或名稱轉換；時間粒度（逐3小時、5天）比現有 F-D0047 更長，跟現有
 降雨資料的3小時分格天然對齊。
 
-**潛力**：現有體感軸是文字關鍵字啟發式判斷，M-A0085-001 提供官方精確計算的數值 +
-四級警示，理論上更準確、更有公信力。但目前 v2 已上線穩定，不需要現在就換。
-
-**待補**：打通的網址是 `api/v1/rest/datastore` 還是 `fileapi/v1/opendataapi`，目前未
-確認，之後真的要接入時需要補上。
+**已確認**：打通的網址是標準路徑 `api/v1/rest/datastore/M-A0085-001`（不用
+fileapi 舊路徑）。實作細節、七地同時段驗證表、決策理由都記在上方 Priority 3 段落。
 
 ---
 

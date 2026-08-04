@@ -885,6 +885,90 @@ function uvSuffix(uvInfo) {
   return uvInfo.index !== null ? `，紫外線指數${uvInfo.index}（${uvInfo.level}）` : `，紫外線${uvInfo.level}`;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 熱傷害指數（Priority 3，決定 B：補強 Thermal，不取代）
+// 來源：M-A0085-001（健康氣象-熱指數及警示全台各鄉鎮五日逐三小時預報）。
+// 七地同時段驗證顯示現有 Thermal 軸（WeatherDescription 關鍵字）在同一天
+// 常常七地一致判成「悶熱」，區分度不夠；M-A0085 有官方數值 + 四級警示，
+// 但只驗證過一天一個時間點，穩定度還沒有把握到可以直接取代。所以做法是：
+// 既有 Thermal 判斷完全不動，只有在達到「警戒」以上時，另外加一句具體的
+// 熱傷害警示句——不影響 THERMAL_RANK/EXPOSURE_RANK 排序、不影響②地點排序。
+//
+// M-A0085-001 是全國單一資料集（一次抓取涵蓋所有縣市），跟按縣市分開查的
+// F-D0047 不同，所以要另外寫一個「合併所有縣市 Location」的抽取函式，不能
+// 沿用只取第一個縣市的 extractLocations()。
+// ═══════════════════════════════════════════════════════════════
+const HEAT_WARNING_NOTABLE = ['警戒', '危險', '高危險'];
+const HEAT_WARNING_SEVERITY = ['高危險', '危險', '警戒']; // 由重到輕，比較用
+function isNotableHeatWarning(w) {
+  return !!w && HEAT_WARNING_NOTABLE.includes(w);
+}
+
+let cachedHeatInjuryLayers = {};
+
+// M-A0085-001 用 records.Locations[]（每個縣市一筆），不是 F-D0047 那種
+// records.Locations[0].Location 只取第一個縣市的結構，這裡合併所有縣市
+function extractAllCountyLocations(rec) {
+  const list = rec?.Locations;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap(c => c.Location || []);
+}
+
+function parseHeatInjurySlots(allLocations, townName) {
+  const loc = allLocations.find(l => l.TownName === townName);
+  if (!loc) return [];
+  return (loc.Time || []).map(t => {
+    // IssueTime 格式 "2026-08-06 12:00:00"，沒有時區資訊，明確補上 +08:00
+    // 避免瀏覽器依使用者所在時區猜測而解析錯誤
+    const start = new Date(t.IssueTime.replace(' ', 'T') + '+08:00');
+    return {
+      start,
+      end: new Date(start.getTime() + 3 * 3600 * 1000), // 逐3小時一格
+      index: t.WeatherElements?.HeatInjuryIndex ?? null,
+      warning: t.WeatherElements?.HeatInjuryWarning || null,
+    };
+  }).filter(s => !isNaN(s.start.getTime()));
+}
+
+function buildHeatInjuryLayers(heatData) {
+  const allLocations = extractAllCountyLocations(heatData);
+  const result = {};
+  for (const [label, cfg] of Object.entries(DIRECTION_TOWNS)) {
+    result[label] = parseHeatInjurySlots(allLocations, cfg.town);
+  }
+  return result;
+}
+
+// 只有達「警戒」以上才回傳，低於此門檻視為不影響決策，UI 端完全不提
+function getCurrentHeatWarning(label, now) {
+  const slots = cachedHeatInjuryLayers[label];
+  if (!slots || !slots.length) return null;
+  const exact = slots.find(s => now >= s.start && now < s.end);
+  const slot = exact || slots.filter(s => s.start <= now).sort((a, b) => b.start - a.start)[0];
+  if (!slot || !isNotableHeatWarning(slot.warning)) return null;
+  return { index: slot.index, warning: slot.warning };
+}
+
+// 從一組方向裡列出所有達到警戒以上的地點，取其中最嚴重的等級代表整體用字
+function representativeHeatWarning(labels, now) {
+  const hits = [];
+  for (const label of labels) {
+    const h = getCurrentHeatWarning(label, now);
+    if (h) hits.push({ label, ...h });
+  }
+  if (!hits.length) return null;
+  let worst = hits[0].warning;
+  for (const h of hits) {
+    if (HEAT_WARNING_SEVERITY.indexOf(h.warning) < HEAT_WARNING_SEVERITY.indexOf(worst)) worst = h.warning;
+  }
+  return { worst, labels: hits.map(h => h.label) };
+}
+
+function heatWarningClause(heatInfo) {
+  if (!heatInfo) return null;
+  return `⚠️ ${heatInfo.labels.join('、')}一帶熱傷害風險達${heatInfo.worst}，建議避開長時間戶外活動`;
+}
+
 // 沒有風險的時段：體感異常（悶熱/高溫）優先講，其次才是曝曬提醒，
 // 兩者都沒有才是單純「天氣穩定」
 function comfortNarrativeSafeClause(bucketLabel, thermalLevel, exposureLevel, uvInfo) {
@@ -1039,10 +1123,16 @@ function renderItineraryText(buckets, now, showTomorrow, dayWord) {
     ? cctvConfirmationClause(firstRiskyBucket.summary.risky.map(e => e.label))
     : null;
 
+  // 熱傷害警示（Priority 3 決定B）：不看風險時段，看全部方向現在這一格——
+  // 跟體感軸是獨立補強關係，未達警戒門檻時 heatWarningClause 回 null，不影響文字
+  const heatNote = heatWarningClause(representativeHeatWarning(Object.keys(DIRECTION_TOWNS), now));
+
   if (mode === 'school') {
     let text = schoolModeClause(buckets, dayWord);
     if (cctvNote) text += ` ${cctvNote}`;
-    el.innerHTML = `<div class="itinerary-line">${text}</div>`;
+    const schoolLines = [`<div class="itinerary-line">${text}</div>`];
+    if (heatNote) schoolLines.push(`<div class="itinerary-line heat-warning-line">${heatNote}</div>`);
+    el.innerHTML = schoolLines.join('');
     return;
   }
 
@@ -1053,13 +1143,16 @@ function renderItineraryText(buckets, now, showTomorrow, dayWord) {
     const thermalLevel = aggregateThermalLevel(allEntries);
     const exposureLevel = aggregateExposureLevel(allEntries);
     const uvInfo = representativeUV(allEntries.map(e => e.label), now);
-    el.innerHTML = allSafeComfortLines(thermalLevel, exposureLevel, dayWord, uvInfo).map(l => `<div class="itinerary-line">${l}</div>`).join('');
+    const safeLines = allSafeComfortLines(thermalLevel, exposureLevel, dayWord, uvInfo).map(l => `<div class="itinerary-line">${l}</div>`);
+    if (heatNote) safeLines.push(`<div class="itinerary-line heat-warning-line">${heatNote}</div>`);
+    el.innerHTML = safeLines.join('');
     return;
   }
 
   const clauses = buckets.map(b => bucketNarrativeClause(b.label, b.summary, now)).filter(Boolean);
   const lines = clauses.map(c => `<div class="itinerary-line">${c}。</div>`);
   if (cctvNote) lines.push(`<div class="itinerary-line cctv-confirm-line">${cctvNote}</div>`);
+  if (heatNote) lines.push(`<div class="itinerary-line heat-warning-line">${heatNote}</div>`);
   el.innerHTML = lines.join('');
 }
 
@@ -1475,6 +1568,27 @@ function renderDebugWeatherPanel() {
     lines.push('');
   }
 
+  // Priority 3 驗證：熱傷害指數（M-A0085-001）資料是否正常載入
+  lines.push('═══ 熱傷害指數診斷（Priority 3，M-A0085-001） ═══', '');
+  const now3 = new Date();
+  for (const [label, cfg] of Object.entries(DIRECTION_TOWNS)) {
+    const slots = cachedHeatInjuryLayers[label];
+    lines.push(`── ${label}（${cfg.town}）`);
+    if (!slots || !slots.length) {
+      lines.push('  ⚠ 尚未載入資料或查無此鄉鎮');
+      lines.push('');
+      continue;
+    }
+    lines.push(`  ✅ ${slots.length} 筆時間格`);
+    const current = slots.find(s => now3 >= s.start && now3 < s.end)
+      || slots.filter(s => s.start <= now3).sort((a, b) => b.start - a.start)[0];
+    if (current) {
+      lines.push(`  現在對應格: ${current.start.toISOString()} → HeatInjuryIndex=${current.index} HeatInjuryWarning="${current.warning || ''}"`);
+    }
+    lines.push('  前3筆: ' + JSON.stringify(slots.slice(0, 3).map(s => ({ start: s.start.toISOString(), index: s.index, warning: s.warning }))));
+    lines.push('');
+  }
+
   panel.textContent = lines.join('\n');
 }
 
@@ -1741,6 +1855,16 @@ async function fetchCounty(code) {
   return locs;
 }
 
+// M-A0085-001 是全國單一資料集，一次抓取涵蓋所有縣市（records.Locations[]
+// 每個縣市一筆），不能用 extractLocations()（只取第一個縣市），直接回傳
+// records 本體讓 buildHeatInjuryLayers 自己合併所有縣市
+async function fetchHeatInjury() {
+  const res = await fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/M-A0085-001?Authorization=${KEY}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for M-A0085-001`);
+  const data = await res.json();
+  return data.records;
+}
+
 
 function parseLocationData(locations, townName) {
   const loc = locations.find(l => l.LocationName === townName);
@@ -1843,13 +1967,15 @@ async function fetchAll() {
   updateDateBadge();
 
   try {
-    const [chiayi, yunlin, windStations, chiayiUV, yunlinUV] = await Promise.all([
+    const [chiayi, yunlin, windStations, chiayiUV, yunlinUV, heatRecords] = await Promise.all([
       fetchCounty('F-D0047-029'),
       fetchCounty('F-D0047-025'),
       fetchWindObs().catch(e => { console.warn('[wind obs]', e.message); return []; }),
       // UV 資料源非核心必要資料，抓失敗不能拖垮整個 fetchAll——降雨資料才是主體
       fetchCounty('F-D0047-031').catch(e => { console.warn('[UV 嘉義]', e.message); return []; }),
       fetchCounty('F-D0047-027').catch(e => { console.warn('[UV 雲林]', e.message); return []; }),
+      // 熱傷害指數同樣非核心必要資料，抓失敗不能拖垮整個 fetchAll
+      fetchHeatInjury().catch(e => { console.warn('[熱傷害指數]', e.message); return null; }),
     ]);
     cachedWindStations = windStations;
 
@@ -1868,6 +1994,13 @@ async function fetchAll() {
       cachedUVLayers = buildUVLayers({ 'F-D0047-031': chiayiUV, 'F-D0047-027': yunlinUV });
     } catch (e) {
       console.warn('[UV layer]', e.message);
+    }
+
+    // 熱傷害指數同樣靜默重算，抓不到就是空陣列，不影響其他功能
+    try {
+      cachedHeatInjuryLayers = buildHeatInjuryLayers(heatRecords);
+    } catch (e) {
+      console.warn('[熱傷害 layer]', e.message);
     }
 
     const allData = {};
