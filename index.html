@@ -968,7 +968,7 @@ function representativeHeatWarning(labels, now) {
 
 function heatWarningClause(heatInfo) {
   if (!heatInfo) return null;
-  return `⚠️ ${heatInfo.labels.join('、')}一帶熱傷害風險達${heatInfo.worst}，建議避開長時間戶外活動`;
+  return `⚠️ ${heatInfo.labels.join('、')}熱傷害${heatInfo.worst}，避免久待戶外`;
 }
 
 // 沒有風險的時段：體感異常（悶熱/高溫）優先講，其次才是曝曬提醒，
@@ -1024,6 +1024,16 @@ function allSafeComfortLines(thermalLevel, exposureLevel, dayWord, uvInfo) {
 // ① AI 行程建議用：跟上面同一份資料，語氣更接近一句自然的行程安排
 // 風險子句補上「幾點後」的精確起始時間（用該時段內最早出現風險的格），
 // 不再只寫「下午」這種模糊範圍
+// 安全度（雨勢）＋舒適度（體感）綜合成一句：雨勢安全的地方，體感不一定舒服，
+// 兩件事本來就該一起講才叫「建議」，不是各講各的——只在體感明顯偏熱/悶熱時
+// 才加註，一般/涼爽不特別強調（不會改變決定就不用多講一句）
+function safeAreaComfortNote(safeEntries) {
+  const thermalLevel = aggregateThermalLevel(safeEntries);
+  if (thermalLevel === 'hot' || thermalLevel === 'muggy') return '但體感悶熱';
+  if (thermalLevel === 'cool') return '，體感舒適';
+  return '';
+}
+
 function bucketNarrativeClause(bucketLabel, summary, now) {
   if (!summary) return null;
   if (summary.risky.length === 0) {
@@ -1039,10 +1049,11 @@ function bucketNarrativeClause(bucketLabel, summary, now) {
   const riskyNames = summary.risky.map(e => e.label).join('、');
   const kind = riskKindLabel(summary.worstLevel);
   // 安全地點的完整名單已經在②地點排序清楚列出（含分數），這裡不用重複
-  // 逐一唱名——同一句話裡兩份地名清單是「字太多」的主因，改成一句帶過
+  // 逐一唱名——同一句話裡兩份地名清單是「字太多」的主因，改成一句帶過。
+  // 但「較穩定」只講了安全度，沒講舒適度，補上體感綜合成一句
   let clause = `<strong>${bucketLabel}${pad(onsetHour)}:00後</strong>${riskyNames}${kind}風險增加`;
   if (summary.safe.length > 0) {
-    clause += '，其餘地區較穩定';
+    clause += `，其餘地區較穩定${safeAreaComfortNote(summary.safe)}`;
   }
   return clause;
 }
