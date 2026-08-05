@@ -93,15 +93,14 @@
   .alert-text{font-size:.78rem;color:var(--muted);line-height:1.6;text-align:center}
   .alert-advice{font-size:.74rem;color:var(--accent);line-height:1.5;text-align:center;margin-top:2px}
 
-  /* CCTV 即時校正區 */
+  /* 現況確認區（雨量站自動判斷，唯讀顯示） */
   .cctv-section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
   .cctv-section-title{font-size:.82rem;font-weight:700;color:var(--accent2);margin-bottom:6px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;cursor:pointer}
   .cctv-body{margin-top:8px}
   .cctv-note{font-size:.72rem;color:var(--muted);margin-bottom:10px;line-height:1.5}
   .cctv-row{display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap}
   .cctv-loc{font-size:.8rem;font-weight:700;color:var(--text);min-width:28px;font-family:'JetBrains Mono',monospace}
-  .cctv-btn{padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--muted);font-size:.72rem;cursor:pointer;transition:all .15s;font-family:'Noto Sans TC',sans-serif;white-space:nowrap}
-  .cctv-btn:hover{border-color:var(--accent2);color:var(--accent2)}
+  .cctv-btn{padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--muted);font-size:.72rem;cursor:default;font-family:'Noto Sans TC',sans-serif;white-space:nowrap}
   .cctv-btn.active.dry{background:#d1fae5;border-color:#059669;color:#065f46}
   .cctv-btn.active.unknown{background:var(--surface2);border-color:var(--muted);color:var(--muted)}
   .cctv-btn.active.wet{background:#fef3c7;border-color:#d97706;color:#92400e}
@@ -194,18 +193,18 @@
     <div id="rainMovementCard" class="rmv-body"><span style="color:var(--muted)">載入中…</span></div>
   </details>
 
-  <!-- 📷 CCTV 現況確認（手動設定，作為預報與現況的交叉比對；不影響上方出門建議分數） -->
+  <!-- 📡 現況確認（自動抓取中央氣象署雨量站，作為預報與現況的交叉比對；不影響上方出門建議分數） -->
   <details class="cctv-section">
-    <summary class="cctv-section-title">📷 現況確認</summary>
+    <summary class="cctv-section-title">📡 現況確認</summary>
     <div class="cctv-body">
-      <div class="cctv-note">請對照 CCTV 設定各方向現況；有風險時段時會在上方補一句現況確認，但不影響地點排序與分數</div>
+      <div class="cctv-note">自動抓取各方向的雨量站現況；有風險時段時會在上方補一句現況確認，但不影響地點排序與分數</div>
       <div id="cctvGrid"></div>
       <div class="cctv-links">
-        快速查看監視器：
+        想自己看畫面：
         <a href="https://1968.freeway.gov.tw/" target="_blank">🛣 國道監視器</a>
         <a href="https://www.mvdis.gov.tw/m3-emv-1968/cctv/index" target="_blank">🏞 省道監視器</a>
       </div>
-      <div class="cctv-weight-note">* CCTV 為單點量測，僅供參考；夜間或鏡頭不清晰時建議設「不確定」</div>
+      <div class="cctv-weight-note">* 雨量站為單點量測，僅供參考；資料不足時會顯示「資料不足」</div>
     </div>
   </details>
 
@@ -270,41 +269,33 @@ let cachedCountyData = {};
 // 生活圈權重：越常去、越在意的方向權重越高（可依實際生活圈調整）
 const DIRECTION_WEIGHTS = { 新港: 40, 溪口: 25, 斗南: 20, 民雄: 15, 朴子: 15, 大林: 10, 北港: 5 };
 
-// CCTV 即時校正：手動設定現場狀況，換算為有效降雨率的微調（±10/20%）
-// 佔最終分數 20%，保持 CWA 預報為主體
+// 現況即時校正：換算為有效降雨率的微調（±10/20%），佔最終分數 20%，
+// 保持 CWA 預報為主體。狀態來源已從手動 CCTV 判讀改成 O-A0002 雨量站
+// 自動判斷（見 buildAutoCctvStates），這裡的門檻/欄位名稱不變
 const CCTV_POP_ADJ = { dry: -10, unknown: 0, wet: +10, raining: +20 };
-const CCTV_BTN_DEF = [
-  { state: 'dry',     label: '☀ 乾燥',  cls: 'dry' },
-  { state: 'unknown', label: '? 不確定', cls: 'unknown' },
-  { state: 'wet',     label: '💧 路濕',  cls: 'wet' },
-  { state: 'raining', label: '🌧 降雨',  cls: 'raining' },
-];
+const CCTV_STATE_LABEL = {
+  dry:     { text: '☀ 尚無降雨', cls: 'dry' },
+  unknown: { text: '? 資料不足', cls: 'unknown' },
+  wet:     { text: '💧 近期有雨', cls: 'wet' },
+  raining: { text: '🌧 降雨中',  cls: 'raining' },
+};
 
-// 存放各方向的 CCTV 狀態；sessionStorage 持久化（重新整理清空）
+// 各方向現況狀態；每次 fetchAll 用 O-A0002 資料自動覆蓋，不再需要
+// sessionStorage 持久化手動選擇（已經沒有手動選擇這回事）
 let cctvStates = {};
-try { const s = sessionStorage.getItem('cctvStates'); if (s) cctvStates = JSON.parse(s); } catch(_) {}
 
-function saveCctvStates() {
-  try { sessionStorage.setItem('cctvStates', JSON.stringify(cctvStates)); } catch(_) {}
-}
-
-function setCctvState(label, state) {
-  cctvStates[label] = state;
-  saveCctvStates();
-  renderCctvGrid();
-  updateAiReport(cachedCountyData);
-}
-
+// 唯讀顯示現況（不再是可點擊按鈕），資料來源見上方 O-A0002 區塊
 function renderCctvGrid() {
   const grid = document.getElementById('cctvGrid');
   if (!grid) return;
   grid.innerHTML = Object.keys(DIRECTION_WEIGHTS).map(label => {
     const cur = cctvStates[label] || 'unknown';
-    const btns = CCTV_BTN_DEF.map(({ state, label: btnLabel, cls }) =>
-      `<button class="cctv-btn ${cls} ${cur === state ? 'active' : ''}"
-        onclick="setCctvState('${label}','${state}')">${btnLabel}</button>`
-    ).join('');
-    return `<div class="cctv-row"><span class="cctv-loc">${label}</span>${btns}</div>`;
+    const { text, cls } = CCTV_STATE_LABEL[cur];
+    const station = cachedRainStations[label];
+    const nowMm = toPrecip(station?.RainfallElement?.Now?.Precipitation);
+    const mmText = nowMm !== null ? `（現在${nowMm}mm）` : '';
+    return `<div class="cctv-row"><span class="cctv-loc">${label}</span>
+      <span class="cctv-btn active ${cls}">${text}${mmText}</span></div>`;
   }).join('');
 }
 
@@ -1109,11 +1100,14 @@ function schoolModeClause(buckets, dayWord) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Phase 3：CCTV 現況確認器 — 不是新的天氣來源，是「預測 vs 現況」對照
+// Phase 3：現況確認器 — 不是新的天氣來源，是「預測 vs 現況」對照
 // 只在「有風險的時段」才發言，回答「現在到底開始下了沒」；
-// 完全不碰分數／排序（②③維持 CWA 預報為準，CCTV 只修飾①的文字）
+// 完全不碰分數／排序（②③維持 CWA 預報為準，這裡只修飾①的文字）
 // 優先序：raining > wet > dry > unknown（unknown 不加任何文字，
-// 維持原預報敘述，不要為了「有裝置」而硬講一句沒意義的話）
+// 維持原預報敘述，不要為了「有資料」而硬講一句沒意義的話）
+// 原本是手動 CCTV 判讀，現在改用 O-A0002 雨量站資料自動判斷（見上方
+// buildAutoCctvStates），cctvStates 這個名稱／下游邏輯沿用不變，只是
+// 資料來源從人工改成自動
 // ═══════════════════════════════════════════════════════════════
 const CCTV_CONFIRM_PRIORITY = ['raining', 'wet', 'dry'];
 
@@ -1127,17 +1121,17 @@ function cctvConfirmationClause(riskyLabels) {
   }
   if (!best) return null; // 全部不確定 → 維持預報，不加文字
 
-  if (best.state === 'raining') return `目前CCTV顯示${best.label}已在降雨，建議延後外出。`;
-  if (best.state === 'wet') return `目前CCTV顯示${best.label}路面已濕，雨勢可能已開始，建議延後。`;
-  return `目前CCTV顯示${best.label}路面乾燥，尚未受影響，可先安排出門。`;
+  if (best.state === 'raining') return `目前雨量站顯示${best.label}已在降雨，建議延後外出。`;
+  if (best.state === 'wet') return `目前雨量站顯示${best.label}近期已有降雨，雨勢可能已開始，建議延後。`;
+  return `目前雨量站顯示${best.label}尚無降雨，可先安排出門。`;
 }
 
 // ═══════════════════════════════════════════════════════════════
 // W-C0033-001（天氣特報：官方警特報層）— 兩階段顯示，避免假警報
 // 只到縣市層級（嘉義縣／雲林縣），不到鄉鎮，所以「縣市有特報」不代表
-// 七個鄉鎮都真的受影響，需要跟 CCTV 現況交叉驗證：
-//   有特報、CCTV 未確認（dry/unknown）→ 淡版提示（ℹ️，留意即可）
-//   有特報、CCTV 確認 wet/raining     → 強版警示（⚠️，建議延後）
+// 七個鄉鎮都真的受影響，需要跟現況（O-A0002 雨量站自動判斷）交叉驗證：
+//   有特報、現況未確認（dry/unknown）→ 淡版提示（ℹ️，留意即可）
+//   有特報、現況確認 wet/raining     → 強版警示（⚠️，建議延後）
 // phenomena/significance 直接帶 CWA 官方原文，不猜關鍵字比對——因為目前
 // 沒看過真實填值時的字串內容（測試當下全台無生效中特報，只驗證過
 // 欄位存在，還沒看過實際值）
@@ -1173,12 +1167,66 @@ function officialAlertClause(labels) {
     const alertText = `${alert.phenomena || ''}${alert.significance || ''}`;
 
     if (confirmedLabel) {
-      const stateText = cctvStates[confirmedLabel] === 'raining' ? '已在降雨' : '路面已濕';
-      return `⚠️ ${county}${alertText}生效中，CCTV顯示${confirmedLabel}${stateText}，建議延後外出`;
+      const stateText = cctvStates[confirmedLabel] === 'raining' ? '已在降雨' : '近期已有降雨';
+      return `⚠️ ${county}${alertText}生效中，雨量站顯示${confirmedLabel}${stateText}，建議延後外出`;
     }
     return `ℹ️ ${county}${alertText}生效中，建議留意天候變化`;
   }
   return null;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// O-A0002-001（雨量觀測站）— 取代手動 CCTV，自動判斷「現在有沒有下雨」
+// 七個鄉鎮都找到跟鄉鎮同名的中央氣象署官方站（新港/溪口/民雄/朴子/大林/
+// 北港/斗南皆有專屬站），不用手動點按鈕，也不用像 F-B0046 那樣算網格。
+// 用 Now/Past10Min/Past1hr 雨量值換算成跟原本 CCTV 同一組狀態
+// （dry/wet/raining/unknown），沿用既有的 cctvStates／CCTV_POP_ADJ／
+// cctvConfirmationClause／officialAlertClause，下游邏輯完全不用改
+// ═══════════════════════════════════════════════════════════════
+let cachedRainStations = {}; // label -> station 物件（含 RainfallElement）
+
+// 優先選跟鄉鎮同名的站（例如「新港鄉」→「新港」站），其次選中央氣象署
+// 官方站，最後才是隨便一個同鄉鎮的站（可能是水利署測站）
+function pickBestStation(stations, townName) {
+  const bare = townName.replace(/[鄉鎮市區]$/, '');
+  const named = stations.find(s => s.GeoInfo?.TownName === townName && s.StationName === bare);
+  if (named) return named;
+  const official = stations.find(s => s.GeoInfo?.TownName === townName && s.Maintainer === '中央氣象署');
+  if (official) return official;
+  return stations.find(s => s.GeoInfo?.TownName === townName) || null;
+}
+
+function buildRainStationLayer(stations) {
+  const result = {};
+  for (const [label, cfg] of Object.entries(DIRECTION_TOWNS)) {
+    result[label] = pickBestStation(stations || [], cfg.town);
+  }
+  return result;
+}
+
+// CWA 無效值常見寫法是負數（例如 -99），一律視為沒有資料
+function toPrecip(v) {
+  const n = Number(v);
+  return Number.isNaN(n) || n < 0 ? null : n;
+}
+
+function deriveStateFromStation(station) {
+  if (!station) return 'unknown';
+  const now = toPrecip(station.RainfallElement?.Now?.Precipitation);
+  const p10 = toPrecip(station.RainfallElement?.Past10Min?.Precipitation);
+  const p1h = toPrecip(station.RainfallElement?.Past1hr?.Precipitation);
+  if (now === null && p10 === null && p1h === null) return 'unknown';
+  if (now !== null && now > 0) return 'raining';
+  if ((p10 !== null && p10 > 0) || (p1h !== null && p1h > 0)) return 'wet';
+  return 'dry';
+}
+
+function buildAutoCctvStates(stationLayer) {
+  const result = {};
+  for (const label of Object.keys(DIRECTION_TOWNS)) {
+    result[label] = deriveStateFromStation(stationLayer[label]);
+  }
+  return result;
 }
 
 function renderItineraryText(buckets, now, showTomorrow, dayWord) {
@@ -1967,6 +2015,14 @@ async function fetchWeatherAlerts() {
   return data.records;
 }
 
+// O-A0002-001（雨量觀測站）同樣是全國單一資料集，站陣列在 cwaopendata.dataset.Station
+async function fetchRainStations() {
+  const res = await fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001?Authorization=${KEY}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for O-A0002-001`);
+  const data = await res.json();
+  return data.cwaopendata?.dataset?.Station || [];
+}
+
 
 function parseLocationData(locations, townName) {
   const loc = locations.find(l => l.LocationName === townName);
@@ -2069,7 +2125,7 @@ async function fetchAll() {
   updateDateBadge();
 
   try {
-    const [chiayi, yunlin, windStations, chiayiUV, yunlinUV, heatRecords, alertRecords] = await Promise.all([
+    const [chiayi, yunlin, windStations, chiayiUV, yunlinUV, heatRecords, alertRecords, rainStations] = await Promise.all([
       fetchCounty('F-D0047-029'),
       fetchCounty('F-D0047-025'),
       fetchWindObs().catch(e => { console.warn('[wind obs]', e.message); return []; }),
@@ -2080,6 +2136,8 @@ async function fetchAll() {
       fetchHeatInjury().catch(e => { console.warn('[熱傷害指數]', e.message); return null; }),
       // 官方警特報同樣非核心必要資料，抓失敗不能拖垮整個 fetchAll
       fetchWeatherAlerts().catch(e => { console.warn('[官方警特報]', e.message); return null; }),
+      // 雨量站資料抓失敗就退回全部 unknown，不能拖垮整個 fetchAll
+      fetchRainStations().catch(e => { console.warn('[雨量站]', e.message); return []; }),
     ]);
     cachedWindStations = windStations;
 
@@ -2112,6 +2170,17 @@ async function fetchAll() {
       cachedWeatherAlerts = buildWeatherAlerts(alertRecords);
     } catch (e) {
       console.warn('[官方警特報 layer]', e.message);
+    }
+
+    // 雨量站現況：取代原本手動 CCTV，自動覆蓋 cctvStates。抓不到就整批
+    // 變成 unknown（等同「不確定」，原本手動模式下也可以選這個狀態，
+    // 下游邏輯不用改）
+    try {
+      cachedRainStations = buildRainStationLayer(rainStations);
+      cctvStates = buildAutoCctvStates(cachedRainStations);
+      renderCctvGrid();
+    } catch (e) {
+      console.warn('[雨量站 layer]', e.message);
     }
 
     const allData = {};
