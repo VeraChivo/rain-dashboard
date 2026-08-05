@@ -900,6 +900,18 @@ function uvSuffix(uvInfo) {
 // F-D0047 不同，所以要另外寫一個「合併所有縣市 Location」的抽取函式，不能
 // 沿用只取第一個縣市的 extractLocations()。
 // ═══════════════════════════════════════════════════════════════
+// 地名清單顯示：全部命中就寫「全區域」；命中大多數時比較「全區域除了X」
+// 跟「逐一列出Y」哪個字數短就用哪個——七個地名塞在同一句話裡是排版跑版、
+// 閱讀吃力的主因，不管是雨勢還是熱傷害，只要是「一組方向」的清單都用這個
+function formatAreaList(hitLabels, allLabels) {
+  const hitSet = new Set(hitLabels);
+  if (hitSet.size >= allLabels.length) return '全區域';
+  const excluded = allLabels.filter(l => !hitSet.has(l));
+  const listedText = hitLabels.join('、');
+  const exceptText = `全區域除了${excluded.join('、')}`;
+  return exceptText.length < listedText.length ? exceptText : listedText;
+}
+
 const HEAT_WARNING_NOTABLE = ['警戒', '危險', '高危險'];
 const HEAT_WARNING_SEVERITY = ['高危險', '危險', '警戒']; // 由重到輕，比較用
 function isNotableHeatWarning(w) {
@@ -968,7 +980,8 @@ function representativeHeatWarning(labels, now) {
 
 function heatWarningClause(heatInfo) {
   if (!heatInfo) return null;
-  return `⚠️ ${heatInfo.labels.join('、')}熱傷害${heatInfo.worst}，避免久待戶外`;
+  const areaText = formatAreaList(heatInfo.labels, Object.keys(DIRECTION_TOWNS));
+  return `⚠️ ${areaText}熱傷害${heatInfo.worst}，避免久待戶外`;
 }
 
 // 沒有風險的時段：體感異常（悶熱/高溫）優先講，其次才是曝曬提醒，
@@ -1046,7 +1059,7 @@ function bucketNarrativeClause(bucketLabel, summary, now) {
     );
   }
   const onsetHour = Math.min(...summary.risky.map(e => e.startHour));
-  const riskyNames = summary.risky.map(e => e.label).join('、');
+  const riskyNames = formatAreaList(summary.risky.map(e => e.label), Object.keys(DIRECTION_TOWNS));
   const kind = riskKindLabel(summary.worstLevel);
   // 安全地點的完整名單已經在②地點排序清楚列出（含分數），這裡不用重複
   // 逐一唱名——同一句話裡兩份地名清單是「字太多」的主因，改成一句帶過。
