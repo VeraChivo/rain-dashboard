@@ -1132,6 +1132,55 @@ function cctvConfirmationClause(riskyLabels) {
   return `目前CCTV顯示${best.label}路面乾燥，尚未受影響，可先安排出門。`;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// W-C0033-001（天氣特報：官方警特報層）— 兩階段顯示，避免假警報
+// 只到縣市層級（嘉義縣／雲林縣），不到鄉鎮，所以「縣市有特報」不代表
+// 七個鄉鎮都真的受影響，需要跟 CCTV 現況交叉驗證：
+//   有特報、CCTV 未確認（dry/unknown）→ 淡版提示（ℹ️，留意即可）
+//   有特報、CCTV 確認 wet/raining     → 強版警示（⚠️，建議延後）
+// phenomena/significance 直接帶 CWA 官方原文，不猜關鍵字比對——因為目前
+// 沒看過真實填值時的字串內容（測試當下全台無生效中特報，只驗證過
+// 欄位存在，還沒看過實際值）
+// ═══════════════════════════════════════════════════════════════
+const ALERT_COUNTY_NAME = { 'F-D0047-029': '嘉義縣', 'F-D0047-025': '雲林縣' };
+
+let cachedWeatherAlerts = {}; // countyName -> hazards[]（phenomena/significance/startTime/endTime）
+
+function buildWeatherAlerts(records) {
+  const result = {};
+  const list = records?.location;
+  if (!Array.isArray(list)) return result;
+  for (const loc of list) {
+    const hazards = loc?.hazardConditions?.hazards;
+    if (Array.isArray(hazards) && hazards.length) result[loc.locationName] = hazards;
+  }
+  return result;
+}
+
+function getCountyAlert(countyName) {
+  const hazards = cachedWeatherAlerts[countyName];
+  return hazards && hazards.length ? hazards[0] : null;
+}
+
+function officialAlertClause(labels) {
+  const counties = [...new Set(labels.map(l => ALERT_COUNTY_NAME[DIRECTION_TOWNS[l]?.dataset]).filter(Boolean))];
+  for (const county of counties) {
+    const alert = getCountyAlert(county);
+    if (!alert) continue;
+
+    const countyLabels = labels.filter(l => ALERT_COUNTY_NAME[DIRECTION_TOWNS[l]?.dataset] === county);
+    const confirmedLabel = countyLabels.find(l => ['wet', 'raining'].includes(cctvStates[l] || 'unknown'));
+    const alertText = `${alert.phenomena || ''}${alert.significance || ''}`;
+
+    if (confirmedLabel) {
+      const stateText = cctvStates[confirmedLabel] === 'raining' ? '已在降雨' : '路面已濕';
+      return `⚠️ ${county}${alertText}生效中，CCTV顯示${confirmedLabel}${stateText}，建議延後外出`;
+    }
+    return `ℹ️ ${county}${alertText}生效中，建議留意天候變化`;
+  }
+  return null;
+}
+
 function renderItineraryText(buckets, now, showTomorrow, dayWord) {
   const el = document.getElementById('itineraryText');
   if (!el) return;
@@ -1154,11 +1203,16 @@ function renderItineraryText(buckets, now, showTomorrow, dayWord) {
   // 跟體感軸是獨立補強關係，未達警戒門檻時 heatWarningClause 回 null，不影響文字
   const heatNote = heatWarningClause(representativeHeatWarning(Object.keys(DIRECTION_TOWNS), now));
 
+  // 官方警特報（W-C0033）：只在看「今天」時才有意義，跟 CCTV 同一種限制——
+  // 已經切到明天視角時，現在生效中的特報不能拿來確認明天
+  const officialNote = !showTomorrow ? officialAlertClause(Object.keys(DIRECTION_TOWNS)) : null;
+
   if (mode === 'school') {
     let text = schoolModeClause(buckets, dayWord);
     if (cctvNote) text += ` ${cctvNote}`;
     const schoolLines = [`<div class="itinerary-line">${text}</div>`];
     if (heatNote) schoolLines.push(`<div class="itinerary-line heat-warning-line">${heatNote}</div>`);
+    if (officialNote) schoolLines.push(`<div class="itinerary-line official-alert-line">${officialNote}</div>`);
     el.innerHTML = schoolLines.join('');
     return;
   }
@@ -1172,6 +1226,7 @@ function renderItineraryText(buckets, now, showTomorrow, dayWord) {
     const uvInfo = representativeUV(allEntries.map(e => e.label), now);
     const safeLines = allSafeComfortLines(thermalLevel, exposureLevel, dayWord, uvInfo).map(l => `<div class="itinerary-line">${l}</div>`);
     if (heatNote) safeLines.push(`<div class="itinerary-line heat-warning-line">${heatNote}</div>`);
+    if (officialNote) safeLines.push(`<div class="itinerary-line official-alert-line">${officialNote}</div>`);
     el.innerHTML = safeLines.join('');
     return;
   }
@@ -1180,6 +1235,7 @@ function renderItineraryText(buckets, now, showTomorrow, dayWord) {
   const lines = clauses.map(c => `<div class="itinerary-line">${c}。</div>`);
   if (cctvNote) lines.push(`<div class="itinerary-line cctv-confirm-line">${cctvNote}</div>`);
   if (heatNote) lines.push(`<div class="itinerary-line heat-warning-line">${heatNote}</div>`);
+  if (officialNote) lines.push(`<div class="itinerary-line official-alert-line">${officialNote}</div>`);
   el.innerHTML = lines.join('');
 }
 
@@ -1616,6 +1672,17 @@ function renderDebugWeatherPanel() {
     lines.push('');
   }
 
+  // 官方警特報診斷（W-C0033-001）：只看嘉義縣/雲林縣，全台其他縣市不列
+  lines.push('═══ 官方警特報診斷（W-C0033-001） ═══', '');
+  for (const county of ['嘉義縣', '雲林縣']) {
+    const alert = getCountyAlert(county);
+    lines.push(`── ${county}`);
+    lines.push(alert ? `  ⚠ 生效中: ${JSON.stringify(alert)}` : '  ✅ 目前無生效中警特報');
+    lines.push('');
+  }
+  const officialNow = officialAlertClause(Object.keys(DIRECTION_TOWNS));
+  lines.push('目前①會顯示的文字: ' + (officialNow || '（無，正常狀態）'));
+
   panel.textContent = lines.join('\n');
 }
 
@@ -1892,6 +1959,14 @@ async function fetchHeatInjury() {
   return data.records;
 }
 
+// W-C0033-001 也是全國單一資料集，跟 M-A0085 一樣直接回傳 records 本體
+async function fetchWeatherAlerts() {
+  const res = await fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0033-001?Authorization=${KEY}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for W-C0033-001`);
+  const data = await res.json();
+  return data.records;
+}
+
 
 function parseLocationData(locations, townName) {
   const loc = locations.find(l => l.LocationName === townName);
@@ -1994,7 +2069,7 @@ async function fetchAll() {
   updateDateBadge();
 
   try {
-    const [chiayi, yunlin, windStations, chiayiUV, yunlinUV, heatRecords] = await Promise.all([
+    const [chiayi, yunlin, windStations, chiayiUV, yunlinUV, heatRecords, alertRecords] = await Promise.all([
       fetchCounty('F-D0047-029'),
       fetchCounty('F-D0047-025'),
       fetchWindObs().catch(e => { console.warn('[wind obs]', e.message); return []; }),
@@ -2003,6 +2078,8 @@ async function fetchAll() {
       fetchCounty('F-D0047-027').catch(e => { console.warn('[UV 雲林]', e.message); return []; }),
       // 熱傷害指數同樣非核心必要資料，抓失敗不能拖垮整個 fetchAll
       fetchHeatInjury().catch(e => { console.warn('[熱傷害指數]', e.message); return null; }),
+      // 官方警特報同樣非核心必要資料，抓失敗不能拖垮整個 fetchAll
+      fetchWeatherAlerts().catch(e => { console.warn('[官方警特報]', e.message); return null; }),
     ]);
     cachedWindStations = windStations;
 
@@ -2028,6 +2105,13 @@ async function fetchAll() {
       cachedHeatInjuryLayers = buildHeatInjuryLayers(heatRecords);
     } catch (e) {
       console.warn('[熱傷害 layer]', e.message);
+    }
+
+    // 官方警特報同樣靜默重算，抓不到就是空物件，不影響其他功能
+    try {
+      cachedWeatherAlerts = buildWeatherAlerts(alertRecords);
+    } catch (e) {
+      console.warn('[官方警特報 layer]', e.message);
     }
 
     const allData = {};
