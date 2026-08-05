@@ -102,10 +102,10 @@
   .cctv-loc-link{font-size:.8rem;font-weight:700;color:var(--accent);min-width:28px;font-family:'JetBrains Mono',monospace;text-decoration:none}
   .cctv-loc-link:hover{text-decoration:underline}
   .cctv-btn{padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--muted);font-size:.72rem;cursor:default;font-family:'Noto Sans TC',sans-serif;white-space:nowrap}
-  .cctv-btn.active.dry{background:#d1fae5;border-color:#059669;color:#065f46}
-  .cctv-btn.active.unknown{background:var(--surface2);border-color:var(--muted);color:var(--muted)}
-  .cctv-btn.active.wet{background:#fef3c7;border-color:#d97706;color:#92400e}
-  .cctv-btn.active.raining{background:#fee2e2;border-color:#e11d48;color:#9f1239}
+  .cctv-btn.active.dry{background:var(--surface2);border-color:var(--border);color:var(--green)}
+  .cctv-btn.active.unknown{background:var(--surface2);border-color:var(--border);color:var(--muted)}
+  .cctv-btn.active.wet{background:var(--surface2);border-color:var(--border);color:#ca8a04}
+  .cctv-btn.active.raining{background:var(--surface2);border-color:var(--border);color:var(--red)}
 
   .legend{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:20px;font-size:.72rem;color:var(--muted)}
   .legend-item{display:flex;align-items:center;gap:5px}
@@ -114,7 +114,7 @@
   .source-note a{color:var(--accent);text-decoration:none}
   /* 輔助資訊分組：收合卡片間距縮小，跟主表格拉開一點距離 */
   .extras-group{display:flex;flex-direction:column;gap:8px;margin-top:24px}
-  .extras-group .rmv-card,.extras-group .cctv-section,.extras-group .radar-section{margin-bottom:0}
+  .extras-group .rmv-card,.extras-group .radar-section{margin-bottom:0}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
   /* 雨胞移動方向文字報告 */
   .rmv-card{background:linear-gradient(135deg,rgba(124,92,252,.06),rgba(47,111,237,.06));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
@@ -169,7 +169,21 @@
 
 <!-- 六地對照（24小時）：放在最前面，打開就先看到主表格 -->
 <div class="section-title">🗺 六地對照｜今明兩日預報</div>
-<div id="mainContent"></div>
+<div id="mainContentToday"></div>
+
+<!-- 📡 現況確認緊接在「今天」的表格下面：雨量站現況只對「今天」有意義
+     （見 cctvConfirmationClause／officialAlertClause 的用法限制），放在
+     今天跟明天中間，視覺上直接跟今天的資料綁在一起，不要讓使用者以為
+     這是明天的現況 -->
+<details class="cctv-section">
+  <summary class="cctv-section-title">📡 現況確認</summary>
+  <div class="cctv-body">
+    <div class="cctv-note">自動抓取各方向的雨量站現況；地名可點擊，直接查該地即時影像。有風險時段時會在上方補一句現況確認，但不影響地點排序與分數</div>
+    <div id="cctvGrid"></div>
+  </div>
+</details>
+
+<div id="mainContentTomorrow"></div>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:#eef4fb"></div>&lt;40%</div>
@@ -189,15 +203,6 @@
   <details class="rmv-card">
     <summary class="rmv-title">🌬 雨胞移動方向</summary>
     <div id="rainMovementCard" class="rmv-body"><span style="color:var(--muted)">載入中…</span></div>
-  </details>
-
-  <!-- 📡 現況確認（自動抓取中央氣象署雨量站，作為預報與現況的交叉比對；不影響上方出門建議分數） -->
-  <details class="cctv-section">
-    <summary class="cctv-section-title">📡 現況確認</summary>
-    <div class="cctv-body">
-      <div class="cctv-note">自動抓取各方向的雨量站現況；地名可點擊，直接查該地即時影像。有風險時段時會在上方補一句現況確認，但不影響地點排序與分數</div>
-      <div id="cctvGrid"></div>
-    </div>
   </details>
 
   <!-- 📡 雷達回波：目前圖片常無法載入（CORS/防盜連） -->
@@ -980,7 +985,7 @@ function heatWarningClause(heatInfo) {
 function comfortNarrativeSafeClause(bucketLabel, thermalLevel, exposureLevel, uvInfo) {
   if (thermalLevel === 'hot' || thermalLevel === 'muggy') {
     const word = thermalLevel === 'hot' ? '氣溫較高' : '悶熱';
-    return `${bucketLabel}體感${word}，建議避開長時間曝曬，適合短時間外出`;
+    return `${bucketLabel}體感${word}，建議避開長時間曝曬<br>可安排短時間外出`;
   }
   if (exposureLevel === 'sunny') {
     return `${bucketLabel}天氣晴朗、日照較強${uvSuffix(uvInfo)}，適合外出但建議防曬`;
@@ -2129,16 +2134,16 @@ function renderAll(allData) {
   const tomorrowKey = `${pad(tomorrow.getMonth()+1)}-${pad(tomorrow.getDate())}`;
   const days = [todayKey, tomorrowKey];
 
-  // 六地對照（24小時）
+  // 六地對照（24小時）：今天/明天分開放進各自容器，中間夾著現況確認區塊
+  // （見 index.html 的 #mainContentToday／#mainContentTomorrow），不再是
+  // 單一 #mainContent 容器
   const locNames = LOCATIONS.map(l => l.name);
-  let mainHtml = '';
-  for (const dk of days) {
-    mainHtml += `<div class="day-section">
+  const dayHtml = (dk) => `<div class="day-section">
       <div class="day-label">📅 ${getDayLabel(dk)}</div>
       ${makeTable(dk, COMPARE_HOURS, locNames, allData, currentDateKey, currentHour)}
     </div>`;
-  }
-  document.getElementById('mainContent').innerHTML = mainHtml;
+  document.getElementById('mainContentToday').innerHTML = dayHtml(days[0]);
+  document.getElementById('mainContentTomorrow').innerHTML = dayHtml(days[1]);
   scrollTablesToDefaultRange();
 }
 
