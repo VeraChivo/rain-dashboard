@@ -96,6 +96,9 @@
   /* 現況確認區（雨量站自動判斷，唯讀顯示） */
   .cctv-section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
   .cctv-section-title{font-size:.82rem;font-weight:700;color:var(--accent2);margin-bottom:6px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;cursor:pointer}
+  .cctv-summary-badge{font-weight:400;font-family:'Noto Sans TC',sans-serif;letter-spacing:0;margin-left:2px}
+  .cctv-summary-badge.calm{color:var(--muted)}
+  .cctv-summary-badge.alert{color:var(--red)}
   .cctv-body{margin-top:8px}
   .cctv-note{font-size:.72rem;color:var(--muted);margin-bottom:10px;line-height:1.5}
   .cctv-row{display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap}
@@ -176,7 +179,7 @@
      今天跟明天中間，視覺上直接跟今天的資料綁在一起，不要讓使用者以為
      這是明天的現況 -->
 <details class="cctv-section">
-  <summary class="cctv-section-title">📡 現況確認</summary>
+  <summary class="cctv-section-title">📡 現況確認<span id="cctvSummaryBadge" class="cctv-summary-badge"></span></summary>
   <div class="cctv-body">
     <div class="cctv-note">自動抓取各方向的雨量站現況；地名可點擊，直接查該地即時影像。有風險時段時會在上方補一句現況確認，但不影響地點排序與分數</div>
     <div id="cctvGrid"></div>
@@ -290,6 +293,17 @@ function cctvLookupUrl(townName) {
   return `https://www.google.com/search?q=${encodeURIComponent(townName + ' 即時影像 監視器')}`;
 }
 
+// 收合狀態下也要能一眼判斷要不要點開——全部沒雨就直接講「目前無雨」，
+// 不用點進去看；只要有任何一個方向有雨（wet/raining），不要用一句話幫
+// 使用者下結論（哪裡下雨、下多大需要看細節才知道），改成提示「點開看看」
+function cctvSummaryBadge() {
+  const states = Object.values(cctvStates);
+  if (!states.length) return null;
+  if (states.some(s => s === 'raining' || s === 'wet')) return { text: '有降雨，點開看看', cls: 'alert' };
+  if (states.every(s => s === 'dry')) return { text: '目前無雨', cls: 'calm' };
+  return null; // 混雜 unknown（資料不完整）時不特別下結論
+}
+
 function renderCctvGrid() {
   const grid = document.getElementById('cctvGrid');
   if (!grid) return;
@@ -302,6 +316,13 @@ function renderCctvGrid() {
     return `<div class="cctv-row"><a class="cctv-loc-link" href="${cctvLookupUrl(cfg.town)}" target="_blank">${label} 🔗</a>
       <span class="cctv-btn active ${cls}">${text}${mmText}</span></div>`;
   }).join('');
+
+  const badgeEl = document.getElementById('cctvSummaryBadge');
+  if (badgeEl) {
+    const b = cctvSummaryBadge();
+    badgeEl.textContent = b ? `（${b.text}）` : '';
+    badgeEl.className = 'cctv-summary-badge' + (b ? ' ' + b.cls : '');
+  }
 }
 
 // 從 3h 資料集解析單一鄉鎮的時段陣列 [{start, end, value}]
