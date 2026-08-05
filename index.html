@@ -99,15 +99,13 @@
   .cctv-body{margin-top:8px}
   .cctv-note{font-size:.72rem;color:var(--muted);margin-bottom:10px;line-height:1.5}
   .cctv-row{display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap}
-  .cctv-loc{font-size:.8rem;font-weight:700;color:var(--text);min-width:28px;font-family:'JetBrains Mono',monospace}
+  .cctv-loc-link{font-size:.8rem;font-weight:700;color:var(--accent);min-width:28px;font-family:'JetBrains Mono',monospace;text-decoration:none}
+  .cctv-loc-link:hover{text-decoration:underline}
   .cctv-btn{padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--muted);font-size:.72rem;cursor:default;font-family:'Noto Sans TC',sans-serif;white-space:nowrap}
   .cctv-btn.active.dry{background:#d1fae5;border-color:#059669;color:#065f46}
   .cctv-btn.active.unknown{background:var(--surface2);border-color:var(--muted);color:var(--muted)}
   .cctv-btn.active.wet{background:#fef3c7;border-color:#d97706;color:#92400e}
   .cctv-btn.active.raining{background:#fee2e2;border-color:#e11d48;color:#9f1239}
-  .cctv-links{font-size:.72rem;color:var(--muted);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
-  .cctv-links a{color:var(--accent);text-decoration:none;margin-right:8px}
-  .cctv-weight-note{font-size:.7rem;color:var(--muted);margin-top:4px;font-style:italic}
 
   .legend{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:20px;font-size:.72rem;color:var(--muted)}
   .legend-item{display:flex;align-items:center;gap:5px}
@@ -197,14 +195,8 @@
   <details class="cctv-section">
     <summary class="cctv-section-title">📡 現況確認</summary>
     <div class="cctv-body">
-      <div class="cctv-note">自動抓取各方向的雨量站現況；有風險時段時會在上方補一句現況確認，但不影響地點排序與分數</div>
+      <div class="cctv-note">自動抓取各方向的雨量站現況；地名可點擊，直接查該地即時影像。有風險時段時會在上方補一句現況確認，但不影響地點排序與分數</div>
       <div id="cctvGrid"></div>
-      <div class="cctv-links">
-        想自己看畫面：
-        <a href="https://1968.freeway.gov.tw/" target="_blank">🛣 國道監視器</a>
-        <a href="https://www.mvdis.gov.tw/m3-emv-1968/cctv/index" target="_blank">🏞 省道監視器</a>
-      </div>
-      <div class="cctv-weight-note">* 雨量站為單點量測，僅供參考；資料不足時會顯示「資料不足」</div>
     </div>
   </details>
 
@@ -285,16 +277,24 @@ const CCTV_STATE_LABEL = {
 let cctvStates = {};
 
 // 唯讀顯示現況（不再是可點擊按鈕），資料來源見上方 O-A0002 區塊
+// 地名直接超連結去查即時影像：沒有官方公開的「依鄉鎮查單一鏡頭」深連結
+// （1968/mvdis 都是整頁地圖，沒有可靠的座標/關鍵字參數），所以用 Google
+// 搜尋帶鄉鎮名稱，點了就能看到附近監視器/即時影像的搜尋結果，不用先進
+// 大地圖再找地點
+function cctvLookupUrl(townName) {
+  return `https://www.google.com/search?q=${encodeURIComponent(townName + ' 即時影像 監視器')}`;
+}
+
 function renderCctvGrid() {
   const grid = document.getElementById('cctvGrid');
   if (!grid) return;
-  grid.innerHTML = Object.keys(DIRECTION_WEIGHTS).map(label => {
+  grid.innerHTML = Object.entries(DIRECTION_TOWNS).map(([label, cfg]) => {
     const cur = cctvStates[label] || 'unknown';
     const { text, cls } = CCTV_STATE_LABEL[cur];
     const station = cachedRainStations[label];
     const nowMm = toPrecip(station?.RainfallElement?.Now?.Precipitation);
     const mmText = nowMm !== null ? `（現在${nowMm}mm）` : '';
-    return `<div class="cctv-row"><span class="cctv-loc">${label}</span>
+    return `<div class="cctv-row"><a class="cctv-loc-link" href="${cctvLookupUrl(cfg.town)}" target="_blank">${label} 🔗</a>
       <span class="cctv-btn active ${cls}">${text}${mmText}</span></div>`;
   }).join('');
 }
@@ -1057,7 +1057,7 @@ function bucketNarrativeClause(bucketLabel, summary, now) {
   // 但「較穩定」只講了安全度，沒講舒適度，補上體感綜合成一句
   let clause = `<strong>${bucketLabel}${pad(onsetHour)}:00後</strong>${riskyNames}${kind}風險增加`;
   if (summary.safe.length > 0) {
-    clause += `，其餘地區較穩定${safeAreaComfortNote(summary.safe)}`;
+    clause += `<br>其餘地區較穩定${safeAreaComfortNote(summary.safe)}`;
   }
   return clause;
 }
@@ -1730,6 +1730,29 @@ function renderDebugWeatherPanel() {
   }
   const officialNow = officialAlertClause(Object.keys(DIRECTION_TOWNS));
   lines.push('目前①會顯示的文字: ' + (officialNow || '（無，正常狀態）'));
+  lines.push('');
+
+  // 雨量站診斷（O-A0002-001）：取代手動 CCTV 的自動判斷，抓失敗時全部
+  // 會變成 unknown（"? 資料不足"），這裡列出每個方向實際抓到哪個站、
+  // 站上原始雨量值，方便判斷是抓不到站、還是站有資料但判斷邏輯有問題
+  lines.push('═══ 雨量站診斷（O-A0002-001） ═══', '');
+  const stationCount = Object.values(cachedRainStations).filter(Boolean).length;
+  lines.push(`共比對到 ${stationCount}/${Object.keys(DIRECTION_TOWNS).length} 個方向有站（抓不到站時，下面全部會是 ⚠ 查無此站，代表 fetch 本身失敗或站陣列是空的）`);
+  lines.push('');
+  for (const [label, cfg] of Object.entries(DIRECTION_TOWNS)) {
+    const station = cachedRainStations[label];
+    const state = cctvStates[label] || 'unknown';
+    lines.push(`── ${label}（${cfg.town}）→ 狀態: ${CCTV_STATE_LABEL[state].text}`);
+    if (!station) {
+      lines.push('  ⚠ 查無此站（fetchRainStations 可能失敗，或此鄉鎮找不到同名站）');
+      lines.push('');
+      continue;
+    }
+    lines.push(`  站名: ${station.StationName}（${station.StationId}） 維護單位: ${station.Maintainer || '—'}`);
+    const rf = station.RainfallElement || {};
+    lines.push(`  Now=${rf.Now?.Precipitation ?? '—'} Past10Min=${rf.Past10Min?.Precipitation ?? '—'} Past1hr=${rf.Past1hr?.Precipitation ?? '—'}`);
+    lines.push('');
+  }
 
   panel.textContent = lines.join('\n');
 }
@@ -2015,12 +2038,26 @@ async function fetchWeatherAlerts() {
   return data.records;
 }
 
-// O-A0002-001（雨量觀測站）同樣是全國單一資料集，站陣列在 cwaopendata.dataset.Station
-async function fetchRainStations() {
-  const res = await fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001?Authorization=${KEY}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for O-A0002-001`);
+// O-A0002-001（雨量觀測站）同樣是全國單一資料集，站陣列在 cwaopendata.dataset.Station。
+// 跟 F-B0046/F-B0053 一樣踩過的坑：同一個資料集 ID，標準 REST 路徑不一定通，
+// 有些只能走舊版 fileapi 路徑。這裡兩條都試，標準路徑失敗或拿不到站陣列時
+// 自動 fallback，不要再靠猜的。
+async function fetchRainStationsFrom(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for O-A0002-001 (${url})`);
   const data = await res.json();
-  return data.cwaopendata?.dataset?.Station || [];
+  return data.cwaopendata?.dataset?.Station || data.records?.Station || [];
+}
+
+async function fetchRainStations() {
+  try {
+    const stations = await fetchRainStationsFrom(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001?Authorization=${KEY}`);
+    if (stations.length > 0) return stations;
+    console.warn('[雨量站] 標準路徑回傳空陣列，改試 fileapi 路徑');
+  } catch (e) {
+    console.warn('[雨量站] 標準路徑失敗，改試 fileapi 路徑', e.message);
+  }
+  return fetchRainStationsFrom(`https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/O-A0002-001?Authorization=${KEY}&format=JSON`);
 }
 
 
