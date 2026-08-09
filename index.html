@@ -1086,7 +1086,7 @@ function bucketNarrativeClause(bucketLabel, summary, now) {
   // 安全地點的完整名單已經在②地點排序清楚列出（含分數），這裡不用重複
   // 逐一唱名——同一句話裡兩份地名清單是「字太多」的主因，改成一句帶過。
   // 但「較穩定」只講了安全度，沒講舒適度，補上體感綜合成一句
-  let clause = `<strong>${bucketLabel}${pad(onsetHour)}:00後</strong>${riskyNames}${kind}風險增加`;
+  let clause = `<strong>${bucketLabel}${pad(onsetHour)}:00後</strong>&nbsp;&nbsp;${riskyNames}${kind}風險增加`;
   if (summary.safe.length > 0) {
     clause += `<br>其餘地區較穩定${safeAreaComfortNote(summary.safe)}`;
   }
