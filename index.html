@@ -920,13 +920,18 @@ function uvSuffix(uvInfo) {
 // 地名清單顯示：全部命中就寫「全區域」；命中大多數時比較「全區域除了X」
 // 跟「逐一列出Y」哪個字數短就用哪個——七個地名塞在同一句話裡是排版跑版、
 // 閱讀吃力的主因，不管是雨勢還是熱傷害，只要是「一組方向」的清單都用這個
+// 地名用空格隔開、不用「、」，每個地名加粗——比較兩種寫法長短時用純文字
+// 長度比，不能把 <strong> 標籤算進去，否則會因為地名數量不同而比歪
 function formatAreaList(hitLabels, allLabels) {
   const hitSet = new Set(hitLabels);
   if (hitSet.size >= allLabels.length) return '全區域';
   const excluded = allLabels.filter(l => !hitSet.has(l));
-  const listedText = hitLabels.join('、');
-  const exceptText = `全區域除了${excluded.join('、')}`;
-  return exceptText.length < listedText.length ? exceptText : listedText;
+  const listedPlain = hitLabels.join(' ');
+  const exceptPlain = `全區域除了${excluded.join(' ')}`;
+  if (exceptPlain.length < listedPlain.length) {
+    return `全區域除了${excluded.map(l => `<strong>${l}</strong>`).join(' ')}`;
+  }
+  return hitLabels.map(l => `<strong>${l}</strong>`).join(' ');
 }
 
 const HEAT_WARNING_NOTABLE = ['警戒', '危險', '高危險'];
@@ -1120,7 +1125,7 @@ function schoolModeClause(buckets, dayWord) {
   if (!afternoon || afternoon.summary.risky.length === 0) {
     return `${dayWord}接送時段天氣穩定，不用特別準備雨具。`;
   }
-  const names = afternoon.summary.risky.map(e => e.label).join('、');
+  const names = afternoon.summary.risky.map(e => `<strong>${e.label}</strong>`).join(' ');
   const onsetHour = Math.min(...afternoon.summary.risky.map(e => e.startHour));
   return `${pad(onsetHour)}:00後接送時段需留意${names}雨勢，建議準備雨具。`;
 }
@@ -1147,9 +1152,9 @@ function cctvConfirmationClause(riskyLabels) {
   }
   if (!best) return null; // 全部不確定 → 維持預報，不加文字
 
-  if (best.state === 'raining') return `目前雨量站顯示${best.label}已在降雨，建議延後外出。`;
-  if (best.state === 'wet') return `目前雨量站顯示${best.label}近期已有降雨，雨勢可能已開始，建議延後。`;
-  return `目前雨量站顯示${best.label}尚無降雨，可先安排出門。`;
+  if (best.state === 'raining') return `目前雨量站顯示<strong>${best.label}</strong>已在降雨，建議延後外出。`;
+  if (best.state === 'wet') return `目前雨量站顯示<strong>${best.label}</strong>近期已有降雨，雨勢可能已開始，建議延後。`;
+  return `目前雨量站顯示<strong>${best.label}</strong>尚無降雨，可先安排出門。`;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1194,9 +1199,9 @@ function officialAlertClause(labels) {
 
     if (confirmedLabel) {
       const stateText = cctvStates[confirmedLabel] === 'raining' ? '已在降雨' : '近期已有降雨';
-      return `⚠️ ${county}${alertText}生效中，雨量站顯示${confirmedLabel}${stateText}，建議延後外出`;
+      return `⚠️ <strong>${county}</strong>${alertText}生效中<br>雨量站顯示<strong>${confirmedLabel}</strong>${stateText}，建議延後外出`;
     }
-    return `ℹ️ ${county}${alertText}生效中，建議留意天候變化`;
+    return `ℹ️ <strong>${county}</strong>${alertText}生效中，建議留意天候變化`;
   }
   return null;
 }
@@ -1531,7 +1536,7 @@ function computeRiskPeriods(now) {
 // 單一格：只講「幾點左右」，不硬寫結束時間
 // 連續多格：合併成「起～迄」區間，並附上下一格（若有資料）何時趨緩
 function periodAlertText(period) {
-  const names = period.risky.join('、');
+  const names = period.risky.map(l => `<strong>${l}</strong>`).join(' ');
   const kind = riskKindLabel(period.worstLevel);
   const firstLabel = `${pad(period.firstSlot.getHours())}:00`;
 
