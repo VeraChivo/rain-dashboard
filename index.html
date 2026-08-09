@@ -975,6 +975,27 @@ function buildHeatInjuryLayers(heatData) {
   return result;
 }
 
+// M-A0085-001 的 Location 物件本身就帶官方 Latitude/Longitude（跟 TownName
+// 同一層），是比自己估的座標更可靠的來源——而且跟 F-B0046 同樣是 CWA 資料，
+// 用同一份官方座標當基準，不用再自己找 Google Maps 點座標
+function extractTownCoord(allLocations, townName) {
+  const loc = allLocations.find(l => l.TownName === townName);
+  if (!loc) return null;
+  const lat = Number(loc.Latitude);
+  const lon = Number(loc.Longitude);
+  if (Number.isNaN(lat) || Number.isNaN(lon)) return null;
+  return { lat, lon };
+}
+
+function buildTownCoordsFromHeatData(heatData) {
+  const allLocations = extractAllCountyLocations(heatData);
+  const result = {};
+  for (const [label, cfg] of Object.entries(DIRECTION_TOWNS)) {
+    result[label] = extractTownCoord(allLocations, cfg.town);
+  }
+  return result;
+}
+
 // 只有達「警戒」以上才回傳，低於此門檻視為不影響決策，UI 端完全不提
 function getCurrentHeatWarning(label, now) {
   const slots = cachedHeatInjuryLayers[label];
@@ -1800,7 +1821,7 @@ function renderDebugWeatherPanel() {
     lines.push(`⚠ 抓取/解析失敗，原因: ${lastShortRainError}`);
   }
   const srfCount = Object.values(cachedShortRainLayer).filter(v => v !== null && v !== undefined).length;
-  lines.push(`共 ${srfCount}/${Object.keys(TOWN_COORDS).length} 個方向取到有效值（抓不到 content 字串或格點越界時全部會是「無資料」）`);
+  lines.push(`共 ${srfCount}/${Object.keys(FALLBACK_TOWN_COORDS).length} 個方向取到有效值（抓不到 content 字串或格點越界時全部會是「無資料」）`);
   if (cachedShortRainDebug) {
     const expectedTotal = FB0046_GRID.dimX * FB0046_GRID.dimY;
     const lenOk = cachedShortRainDebug.totalValues === expectedTotal;
@@ -1809,14 +1830,15 @@ function renderDebugWeatherPanel() {
     lines.push('（cachedShortRainDebug 是空的——本次 fetchAll 沒有成功解析過，不是資料集本身沒資料）');
   }
   lines.push('');
-  for (const [label, coord] of Object.entries(TOWN_COORDS)) {
+  for (const label of Object.keys(FALLBACK_TOWN_COORDS)) {
+    const debugEntry = cachedShortRainDebug?.perTown?.[label];
+    const coord = debugEntry?.coord || resolveTownCoords()[label];
     const idx = gridIndexForCoord(coord.lat, coord.lon);
     const mm = cachedShortRainLayer[label];
-    const debugEntry = cachedShortRainDebug?.perTown?.[label];
     // raw 是「-99 沒有被遮蔽成無資料」的真實解析值，用來分辨「真的是 -99
     // 無回波」還是「根本沒解析到東西（undefined/NaN）」
     const rawStr = debugEntry ? `（原始值=${debugEntry.raw === undefined ? '陣列裡沒這個索引' : Number.isNaN(debugEntry.raw) ? 'NaN（split/parseFloat 失敗）' : debugEntry.raw}）` : '';
-    lines.push(`── ${label}（lat=${coord.lat}, lon=${coord.lon}）→ 格點索引=${idx ?? '越界'} → ${mm === null || mm === undefined ? '無資料' : mm.toFixed(1) + 'mm'} ${rawStr}`);
+    lines.push(`── ${label}（lat=${coord.lat}, lon=${coord.lon}, 座標來源=${coord.source || '?'}）→ 格點索引=${idx ?? '越界'} → ${mm === null || mm === undefined ? '無資料' : mm.toFixed(1) + 'mm'} ${rawStr}`);
     if (debugEntry?.hyp) {
       const parts = Object.entries(debugEntry.hyp).map(([key, hidx]) => {
         const v = debugEntry.hypValues[key];
@@ -1926,10 +1948,11 @@ function updateAiReport(countyData) {
 // 不隨每次請求變動，所以直接寫死，不用每次從回應裡重新解析）
 const FB0046_GRID = { startLon: 118, startLat: 20, resolution: 0.0125, dimX: 441, dimY: 561 };
 
-// 七鄉鎮公所概略座標（WGS84），用來換算最近格點；格點解析度 1.25km，
-// 座標本身若有數十~數百公尺誤差，換算出的格點索引可能因此偏移一格，
-// 這是目前設計已知、尚未解決的誤差來源（SSOT 開放問題之一）
-const TOWN_COORDS = {
+// 七鄉鎮公所概略座標（WGS84）—— 只當 M-A0085 官方座標拿不到時的備援，
+// 不是主要來源了。這組是用一般地理知識估的，沒有精確查證過；已知跟
+// M-A0085 官方座標（例如新港鄉 23.55380058,120.33899690）有明顯落差，
+// 對 1.25km 格點解析度來說這種落差可能直接讓索引偏移到隔壁格
+const FALLBACK_TOWN_COORDS = {
   新港: { lat: 23.5454, lon: 120.3651 },
   溪口: { lat: 23.5744, lon: 120.3923 },
   民雄: { lat: 23.5495, lon: 120.4321 },
@@ -1938,6 +1961,23 @@ const TOWN_COORDS = {
   北港: { lat: 23.5686, lon: 120.3011 },
   斗南: { lat: 23.6825, lon: 120.4814 },
 };
+
+// 每次 fetchAll 用當次抓到的 M-A0085 Location 資料重建，是官方座標的
+// 主要來源；抓不到某個鄉鎮時才退回 FALLBACK_TOWN_COORDS
+let cachedTownCoords = {};
+
+function resolveTownCoords() {
+  const result = {};
+  for (const label of Object.keys(FALLBACK_TOWN_COORDS)) {
+    const official = cachedTownCoords[label];
+    if (official) {
+      result[label] = { lat: official.lat, lon: official.lon, source: 'official（M-A0085）' };
+    } else {
+      result[label] = { ...FALLBACK_TOWN_COORDS[label], source: 'fallback（估值，未查證）' };
+    }
+  }
+  return result;
+}
 
 // 247,401 個值的逗號分隔字串藏在回應的哪個巢狀層級還沒 100% 確認過
 // （只驗證過欄位名稱是 content，深度沒逐字核對），遞迴找，不寫死路徑
@@ -1999,13 +2039,16 @@ function gridHypotheses(lat, lon) {
 // 看起來一樣，但診斷面板不該遮蔽這個差異
 let cachedShortRainDebug = null;
 
-function buildShortRainLayer(contentStr) {
+// townCoords: { label: {lat, lon, source} }，預設用 resolveTownCoords()
+// （官方座標優先、備援其次），測試時可以傳自己的座標表進來
+function buildShortRainLayer(contentStr, townCoords) {
+  const coords = townCoords || resolveTownCoords();
   const result = {};
   cachedShortRainDebug = null;
   if (!contentStr) return result;
   const values = contentStr.split(',').map(Number);
   const perTown = {};
-  for (const [label, coord] of Object.entries(TOWN_COORDS)) {
+  for (const [label, coord] of Object.entries(coords)) {
     const idx = gridIndexForCoord(coord.lat, coord.lon);
     const v = idx !== null ? values[idx] : undefined;
     const hyp = gridHypotheses(coord.lat, coord.lon);
@@ -2013,7 +2056,7 @@ function buildShortRainLayer(contentStr) {
     for (const [key, hidx] of Object.entries(hyp)) {
       hypValues[key] = hidx !== null ? values[hidx] : undefined;
     }
-    perTown[label] = { idx, raw: v, hyp, hypValues };
+    perTown[label] = { idx, raw: v, hyp, hypValues, coord };
     result[label] = (v === undefined || Number.isNaN(v) || v === -99) ? null : v;
   }
   cachedShortRainDebug = { totalValues: values.length, perTown };
@@ -2271,6 +2314,14 @@ async function fetchAll() {
       cachedHeatInjuryLayers = buildHeatInjuryLayers(heatRecords);
     } catch (e) {
       console.warn('[熱傷害 layer]', e.message);
+    }
+
+    // M-A0085 的 Location 物件自帶官方 Latitude/Longitude，重建一份七鄉鎮
+    // 官方座標表給 F-B0046 用，比自己估的座標可靠，兩邊都是 CWA 資料基準一致
+    try {
+      cachedTownCoords = buildTownCoordsFromHeatData(heatRecords);
+    } catch (e) {
+      console.warn('[官方座標]', e.message);
     }
 
     // 官方警特報同樣靜默重算，抓不到就是空物件，不影響其他功能
