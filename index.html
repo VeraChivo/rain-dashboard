@@ -1791,6 +1791,9 @@ function renderDebugWeatherPanel() {
   // 100% 用真實回應核對過，這裡列出每個方向換算出的格點索引跟取到的值，
   // 方便判斷是 fetch 失敗、content 字串沒找到、還是座標換算錯了格點
   lines.push('═══ 短時雨勢預警診斷（F-B0046-001） ═══', '');
+  if (lastShortRainError) {
+    lines.push(`⚠ 抓取/解析失敗，原因: ${lastShortRainError}`);
+  }
   const srfCount = Object.values(cachedShortRainLayer).filter(v => v !== null && v !== undefined).length;
   lines.push(`共 ${srfCount}/${Object.keys(TOWN_COORDS).length} 個方向取到有效值（抓不到 content 字串或格點越界時全部會是「無資料」）`);
   lines.push('');
@@ -1957,6 +1960,9 @@ function buildShortRainLayer(contentStr) {
 }
 
 let cachedShortRainLayer = {};
+// 抓取/解析失敗的實際原因，供 debug 面板顯示——手機使用者不容易開
+// devtools console，把錯誤訊息直接放進面板比較好截圖回報
+let lastShortRainError = null;
 
 // 只顯示原始預估值，不做任何門檻判斷或文案——規則設計是下一步，這裡
 // 刻意先不做，避免把還沒驗證過的門檻直接 commit 成正式邏輯
@@ -2163,6 +2169,7 @@ async function fetchAll() {
   setLoading(true);
   setStatus('抓取氣象署資料中…');
   updateDateBadge();
+  lastShortRainError = null; // 每次重抓都清掉舊錯誤，避免顯示過期訊息
 
   try {
     const [chiayi, yunlin, chiayiUV, yunlinUV, heatRecords, alertRecords, rainStations, shortRainContent] = await Promise.all([
@@ -2178,7 +2185,7 @@ async function fetchAll() {
       // 雨量站資料抓失敗就退回全部 unknown，不能拖垮整個 fetchAll
       fetchRainStations().catch(e => { console.warn('[雨量站]', e.message); return []; }),
       // F-B0046 單次回應 2.7MB，非阻斷式抓取，失敗就整批顯示無資料
-      fetchShortRainForecast().catch(e => { console.warn('[短時雨勢預警]', e.message); return null; }),
+      fetchShortRainForecast().catch(e => { console.warn('[短時雨勢預警]', e.message); lastShortRainError = e.message; return null; }),
     ]);
 
     cachedCountyData = { 'F-D0047-029': chiayi, 'F-D0047-025': yunlin };
