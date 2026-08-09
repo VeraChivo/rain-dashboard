@@ -1195,13 +1195,15 @@ function officialAlertClause(labels) {
 
     const countyLabels = labels.filter(l => ALERT_COUNTY_NAME[DIRECTION_TOWNS[l]?.dataset] === county);
     const confirmedLabel = countyLabels.find(l => ['wet', 'raining'].includes(cctvStates[l] || 'unknown'));
-    const alertText = `${alert.phenomena || ''}${alert.significance || ''}`;
+    // 真實回應是 phenomena/significance 包在 info 底下，不是掛在 hazard 物件
+    // 最上層（跟猜測不同，已用使用者截圖的真實 W-C0033-001 回應驗證過）
+    const alertText = `${alert.info?.phenomena || alert.phenomena || ''}${alert.info?.significance || alert.significance || ''}`;
 
     if (confirmedLabel) {
       const stateText = cctvStates[confirmedLabel] === 'raining' ? '已在降雨' : '近期已有降雨';
-      return `⚠️ <strong>${county}</strong> ${alertText}生效中<br>雨量站顯示 <strong>${confirmedLabel}</strong> ${stateText}，建議延後外出`;
+      return `⚠️ <strong>${county}</strong> 目前有${alertText}<br>雨量站顯示 <strong>${confirmedLabel}</strong> ${stateText}，建議延後外出`;
     }
-    return `ℹ️ <strong>${county}</strong> ${alertText}生效中，建議留意天候變化`;
+    return `ℹ️ <strong>${county}</strong> 目前有${alertText}，建議留意天候變化`;
   }
   return null;
 }
