@@ -1125,7 +1125,7 @@ function schoolModeClause(buckets, dayWord) {
   if (!afternoon || afternoon.summary.risky.length === 0) {
     return `${dayWord}接送時段天氣穩定，不用特別準備雨具。`;
   }
-  const names = afternoon.summary.risky.map(e => `<strong>${e.label}</strong>`).join(' ');
+  const names = formatAreaList(afternoon.summary.risky.map(e => e.label), Object.keys(DIRECTION_TOWNS));
   const onsetHour = Math.min(...afternoon.summary.risky.map(e => e.startHour));
   return `${pad(onsetHour)}:00後接送時段需留意 ${names} 雨勢，建議準備雨具。`;
 }
@@ -1541,7 +1541,9 @@ function computeRiskPeriods(now) {
 // 單一格：只講「幾點左右」，不硬寫結束時間
 // 連續多格：合併成「起～迄」區間，並附上下一格（若有資料）何時趨緩
 function periodAlertText(period) {
-  const names = period.risky.map(l => `<strong>${l}</strong>`).join(' ');
+  // 跟②地點排序同一種收斂：這個時段全部七個方向都受影響時要收成「全區域」，
+  // 不要逐一列出七個地名（formatAreaList 跟其他地方用同一套規則）
+  const names = formatAreaList(period.risky, Object.keys(DIRECTION_TOWNS));
   const kind = riskKindLabel(period.worstLevel);
   const firstLabel = `${pad(period.firstSlot.getHours())}:00`;
 
