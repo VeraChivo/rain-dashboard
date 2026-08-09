@@ -1813,9 +1813,11 @@ function renderDebugWeatherPanel() {
     lines.push('');
   }
 
-  // 短時雨勢預警診斷（F-B0046-001）：格點值巢狀路徑、格點索引都還沒
-  // 100% 用真實回應核對過，這裡列出每個方向換算出的格點索引跟取到的值，
-  // 方便判斷是 fetch 失敗、content 字串沒找到、還是座標換算錯了格點
+  // 短時雨勢預警診斷（F-B0046-001）：格點公式已用使用者上傳的真實 XML
+  // 原始格式（非轉換過的 JSON）裡的 contentDescription 官方文字確認過，
+  // 不再是猜測（細節見 FB0046_GRID 定義處的註解）；這裡列出每個方向換算
+  // 出的格點索引跟取到的值，方便之後判斷是 fetch 失敗、content 字串沒
+  // 找到、還是單純這個時間片段這裡沒有預報雨量
   lines.push('═══ 短時雨勢預警診斷（F-B0046-001） ═══', '');
   if (lastShortRainError) {
     lines.push(`⚠ 抓取/解析失敗，原因: ${lastShortRainError}`);
@@ -1823,9 +1825,9 @@ function renderDebugWeatherPanel() {
   const srfCount = Object.values(cachedShortRainLayer).filter(v => v !== null && v !== undefined).length;
   lines.push(`共 ${srfCount}/${Object.keys(FALLBACK_TOWN_COORDS).length} 個方向取到有效值（抓不到 content 字串或格點越界時全部會是「無資料」）`);
   if (cachedShortRainDebug) {
-    const expectedTotal = FB0046_GRID.dimX * FB0046_GRID.dimY;
+    const expectedTotal = FB0046_GRID.latCount * FB0046_GRID.lonCount;
     const lenOk = cachedShortRainDebug.totalValues === expectedTotal;
-    lines.push(`實際解析出 ${cachedShortRainDebug.totalValues} 個值（預期 ${expectedTotal} = ${FB0046_GRID.dimX}×${FB0046_GRID.dimY}）${lenOk ? '✅ 長度相符' : '⚠ 長度不符，content 字串可能不是這個格點資料，或 split 有問題'}`);
+    lines.push(`實際解析出 ${cachedShortRainDebug.totalValues} 個值（預期 ${expectedTotal} = ${FB0046_GRID.latCount}×${FB0046_GRID.lonCount}）${lenOk ? '✅ 長度相符' : '⚠ 長度不符，content 字串可能不是這個格點資料，或 split 有問題'}`);
   } else {
     lines.push('（cachedShortRainDebug 是空的——本次 fetchAll 沒有成功解析過，不是資料集本身沒資料）');
   }
@@ -1839,25 +1841,7 @@ function renderDebugWeatherPanel() {
     // 無回波」還是「根本沒解析到東西（undefined/NaN）」
     const rawStr = debugEntry ? `（原始值=${debugEntry.raw === undefined ? '陣列裡沒這個索引' : Number.isNaN(debugEntry.raw) ? 'NaN（split/parseFloat 失敗）' : debugEntry.raw}）` : '';
     lines.push(`── ${label}（lat=${coord.lat}, lon=${coord.lon}, 座標來源=${coord.source || '?'}）→ 格點索引=${idx ?? '越界'} → ${mm === null || mm === undefined ? '無資料' : mm.toFixed(1) + 'mm'} ${rawStr}`);
-    if (debugEntry?.hyp) {
-      const parts = Object.entries(debugEntry.hyp).map(([key, hidx]) => {
-        const v = debugEntry.hypValues[key];
-        const vStr = hidx === null ? '越界' : (v === undefined ? '無索引' : v);
-        return `${key}=${vStr}`;
-      });
-      lines.push(`    格點慣例假設比對: ${parts.join('  ')}`);
-    }
-    if (debugEntry?.nearby) {
-      const nearbyParts = Object.entries(debugEntry.nearby).map(([key, hit]) => {
-        if (!hit) return `${key}=±3格內找不到`;
-        return `${key}=偏移(dx=${hit.dx},dy=${hit.dy})值=${hit.v}`;
-      });
-      lines.push(`    ±3格鄰近搜尋: ${nearbyParts.join('  ')}`);
-    }
   }
-  lines.push('');
-  lines.push('（如果目前有方向正在下雨卻全部是 -99，看上面哪一組假設在該方向拿到「非 -99」的合理數值，那組才是正確方向；');
-  lines.push('如果精確那一格是 -99 但附近搜尋找得到，代表只是差一兩格沒對到；如果附近整片都找不到，問題不只是差一兩格）');
 
   panel.textContent = lines.join('\n');
 }
@@ -1952,9 +1936,27 @@ function updateAiReport(countyData) {
 // 真實案例回看再定），先不要把 QPESUMS 的「預報量」誤當精確降雨量處理
 // ═══════════════════════════════════════════════════════════════
 
-// 格點定義（SSOT 已用真實 JSON 驗證過的固定值，資料集本身的網格定義，
-// 不隨每次請求變動，所以直接寫死，不用每次從回應裡重新解析）
-const FB0046_GRID = { startLon: 118, startLat: 20, resolution: 0.0125, dimX: 441, dimY: 561 };
+// 格點定義——已用使用者上傳的真實 XML 原始格式（不是轉換過的 JSON）裡的
+// contentDescription 官方文字確認：
+// 「左下角為第一點東經117.975、北緯19.975，先依次經向遞增，再緯向遞增」
+// 也就是：
+//   1. 起點是西南角 (117.975, 19.975)，不是 parameterSet 宣告的
+//      StartPointLongitude=118／StartPointLatitude=20（兩者差 2 格，
+//      0.025°=2×0.0125°，parameterSet 那組不是陣列索引 0 的真實座標）
+//   2. 先填滿一整排「經度」（由西向東遞增）才換下一列「緯度」（由南向北
+//      遞增）——經度是快速變動軸，緯度是慢速變動軸
+//   3. GridDimensionY=561 其實是「經度」方向的格數（117.975~124.9875°E），
+//      GridDimensionX=441 其實是「緯度」方向的格數（19.975~25.4875°N）——
+//      命名剛好跟直覺的「X=經度/Y=緯度」相反，這正是之前 A~D 四種假設
+//      全部落空的根本原因（沒人想到欄位命名本身是反的）
+// 這組值不再是猜測，是直接讀官方 contentDescription 原文得到的
+const FB0046_GRID = {
+  startLon: 117.975,
+  startLat: 19.975,
+  resolution: 0.0125,
+  lonCount: 561, // 官方欄位 GridDimensionY，實際是經度格數（快速變動軸）
+  latCount: 441, // 官方欄位 GridDimensionX，實際是緯度格數（慢速變動軸）
+};
 
 // 七鄉鎮公所概略座標（WGS84）—— 只當 M-A0085 官方座標拿不到時的備援，
 // 不是主要來源了。這組是用一般地理知識估的，沒有精確查證過；已知跟
@@ -2013,113 +2015,14 @@ async function fetchShortRainForecast() {
   return contentStr;
 }
 
+// 官方 contentDescription 確認的公式：西南角為第一點，先經度（西到東）
+// 遞增填滿一整排，再緯度（南到北）遞增換下一排——經度是快速變動軸
+// （用 lonCount=561），緯度是慢速變動軸（用 latCount=441）
 function gridIndexForCoord(lat, lon) {
-  const x = Math.round((lon - FB0046_GRID.startLon) / FB0046_GRID.resolution);
-  const y = Math.round((lat - FB0046_GRID.startLat) / FB0046_GRID.resolution);
-  if (x < 0 || x >= FB0046_GRID.dimX || y < 0 || y >= FB0046_GRID.dimY) return null;
-  return y * FB0046_GRID.dimX + x;
-}
-
-// 全部七個地方都拿到 -99，但同一時間 O-A0002 雨量站顯示六個地方都在下雨
-// ——兩者矛盾，代表不是「這裡真的沒有回波」，是格點索引公式本身猜錯了
-// （方向或攤平順序）。與其再猜一次直接改掉，這裡把幾種常見的格點慣例
-// 全部算出來，讓 debug 面板同時顯示，用「已知現在真的在下雨的座標」當
-// ground truth 反推哪一種假設是對的，不用再猜第二次
-const FB0046_LAT_MAX = FB0046_GRID.startLat + FB0046_GRID.dimY * FB0046_GRID.resolution;
-
-// A~D 全部落空後，發現一件之前沒測過的事：dimX=441／dimY=561 配上
-// StartLat=20／StartLon=118／Resolution=0.0125 反推地理範圍時，
-// 「dimX=緯度格數、dimY=經度格數」（20~25.5°N、118~125°E，很乾淨的
-// 台灣周邊範圍）比「dimX=經度格數、dimY=緯度格數」（118~123.5°E、
-// 20~27.0°N，27°N 已經超出台灣本島太多）合理得多——代表 A~D 全部都
-// 猜錯了同一件事：預設「X＝經度」「Y＝緯度」，但這個資料集的
-// GridDimensionX/Y 命名可能剛好是反過來的（X 對應緯度、Y 對應經度）。
-// E/F 是這個新假設，緯度方向還不確定，兩種都測
-const FB0046_LAT_MAX_IF_X_IS_LAT = FB0046_GRID.startLat + FB0046_GRID.dimX * FB0046_GRID.resolution;
-
-function gridHypotheses(lat, lon) {
-  const x = Math.round((lon - FB0046_GRID.startLon) / FB0046_GRID.resolution);
-  const yFromSouth = Math.round((lat - FB0046_GRID.startLat) / FB0046_GRID.resolution);
-  const yFromNorth = Math.round((FB0046_LAT_MAX - lat) / FB0046_GRID.resolution);
-  const inBounds = (xx, yy) => xx >= 0 && xx < FB0046_GRID.dimX && yy >= 0 && yy < FB0046_GRID.dimY;
-
-  // E/F：緯度用 dimX（441格，20~25.5°N），經度用 dimY（561格，118~125°E）
   const lonCol = Math.round((lon - FB0046_GRID.startLon) / FB0046_GRID.resolution);
-  const latRowFromSouth = Math.round((lat - FB0046_GRID.startLat) / FB0046_GRID.resolution);
-  const latRowFromNorth = Math.round((FB0046_LAT_MAX_IF_X_IS_LAT - lat) / FB0046_GRID.resolution);
-  const inBoundsSwapped = (row, col) => row >= 0 && row < FB0046_GRID.dimX && col >= 0 && col < FB0046_GRID.dimY;
-
-  return {
-    A_南到北_列優先: inBounds(x, yFromSouth) ? yFromSouth * FB0046_GRID.dimX + x : null,
-    B_北到南_列優先: inBounds(x, yFromNorth) ? yFromNorth * FB0046_GRID.dimX + x : null,
-    C_南到北_欄優先: inBounds(x, yFromSouth) ? x * FB0046_GRID.dimY + yFromSouth : null,
-    D_北到南_欄優先: inBounds(x, yFromNorth) ? x * FB0046_GRID.dimY + yFromNorth : null,
-    E_緯度為X軸_南到北: inBoundsSwapped(latRowFromSouth, lonCol) ? latRowFromSouth * FB0046_GRID.dimY + lonCol : null,
-    F_緯度為X軸_北到南: inBoundsSwapped(latRowFromNorth, lonCol) ? latRowFromNorth * FB0046_GRID.dimY + lonCol : null,
-  };
-}
-
-// 四種假設在「精確那一格」都是 -99，還不能排除「只是差一兩格沒對到」——
-// 這個函式在每種假設各自的排列方式下，往外搜尋 ±range 格，回傳距離最近的
-// 非 -99 值（連同偏移量）。附近找得到 → 大概是索引/座標還差一點點；
-// 附近整片都找不到 → 問題不是差一兩格這麼簡單，可能整個時間片段這裡就是
-// 沒有預報值，或格點慣例假設本身的方向還是不對
-function searchNearbyValid(values, lat, lon, range) {
-  const x = Math.round((lon - FB0046_GRID.startLon) / FB0046_GRID.resolution);
-  const yFromSouth = Math.round((lat - FB0046_GRID.startLat) / FB0046_GRID.resolution);
-  const yFromNorth = Math.round((FB0046_LAT_MAX - lat) / FB0046_GRID.resolution);
-  const inBounds = (xx, yy) => xx >= 0 && xx < FB0046_GRID.dimX && yy >= 0 && yy < FB0046_GRID.dimY;
-
-  function scan(baseX, baseY, rowMajor) {
-    let best = null;
-    for (let dy = -range; dy <= range; dy++) {
-      for (let dx = -range; dx <= range; dx++) {
-        const xx = baseX + dx, yy = baseY + dy;
-        if (!inBounds(xx, yy)) continue;
-        const idx = rowMajor ? yy * FB0046_GRID.dimX + xx : xx * FB0046_GRID.dimY + yy;
-        const v = values[idx];
-        if (v !== undefined && !Number.isNaN(v) && v !== -99) {
-          const dist = Math.abs(dx) + Math.abs(dy);
-          if (!best || dist < best.dist) best = { dx, dy, v, dist };
-        }
-      }
-    }
-    return best;
-  }
-
-  // E/F：緯度用 dimX（bound）、經度用 dimY（bound），index = latRow*dimY+lonCol，
-  // 跟 gridHypotheses 裡 E/F 的算法對應——見上面 gridHypotheses 的說明
-  const lonCol = x;
-  const latRowFromSouth = yFromSouth;
-  const latRowFromNorth = Math.round((FB0046_LAT_MAX_IF_X_IS_LAT - lat) / FB0046_GRID.resolution);
-  const inBoundsSwapped = (row, col) => row >= 0 && row < FB0046_GRID.dimX && col >= 0 && col < FB0046_GRID.dimY;
-
-  function scanSwapped(baseRow, baseCol) {
-    let best = null;
-    for (let dCol = -range; dCol <= range; dCol++) {
-      for (let dRow = -range; dRow <= range; dRow++) {
-        const row = baseRow + dRow, col = baseCol + dCol;
-        if (!inBoundsSwapped(row, col)) continue;
-        const idx = row * FB0046_GRID.dimY + col;
-        const v = values[idx];
-        if (v !== undefined && !Number.isNaN(v) && v !== -99) {
-          const dist = Math.abs(dRow) + Math.abs(dCol);
-          // dx/dy 統一用經度/緯度方向命名，跟 A~D 的輸出格式一致方便比對
-          if (!best || dist < best.dist) best = { dx: dCol, dy: dRow, v, dist };
-        }
-      }
-    }
-    return best;
-  }
-
-  return {
-    A_南到北_列優先: scan(x, yFromSouth, true),
-    B_北到南_列優先: scan(x, yFromNorth, true),
-    C_南到北_欄優先: scan(x, yFromSouth, false),
-    D_北到南_欄優先: scan(x, yFromNorth, false),
-    E_緯度為X軸_南到北: scanSwapped(latRowFromSouth, lonCol),
-    F_緯度為X軸_北到南: scanSwapped(latRowFromNorth, lonCol),
-  };
+  const latRow = Math.round((lat - FB0046_GRID.startLat) / FB0046_GRID.resolution);
+  if (lonCol < 0 || lonCol >= FB0046_GRID.lonCount || latRow < 0 || latRow >= FB0046_GRID.latCount) return null;
+  return latRow * FB0046_GRID.lonCount + lonCol;
 }
 
 // 無效值 -99（海洋/無回波區域），跟其他資料源的無效值處理方式一致。
@@ -2141,13 +2044,7 @@ function buildShortRainLayer(contentStr, townCoords) {
   for (const [label, coord] of Object.entries(coords)) {
     const idx = gridIndexForCoord(coord.lat, coord.lon);
     const v = idx !== null ? values[idx] : undefined;
-    const hyp = gridHypotheses(coord.lat, coord.lon);
-    const hypValues = {};
-    for (const [key, hidx] of Object.entries(hyp)) {
-      hypValues[key] = hidx !== null ? values[hidx] : undefined;
-    }
-    const nearby = searchNearbyValid(values, coord.lat, coord.lon, 3);
-    perTown[label] = { idx, raw: v, hyp, hypValues, coord, nearby };
+    perTown[label] = { idx, raw: v, coord };
     result[label] = (v === undefined || Number.isNaN(v) || v === -99) ? null : v;
   }
   cachedShortRainDebug = { totalValues: values.length, perTown };
