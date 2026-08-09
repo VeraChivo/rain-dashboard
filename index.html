@@ -1453,8 +1453,11 @@ function renderRankList(wlAdvice, buckets, dayWordFormal) {
     const c = scoreToColor(g.score);
     const status = g.note || comfortStatusText(g.thermalLevel, g.exposureLevel, dayWordFormal);
     const statusHtml = status ? `<div class="rank-status">${status}</div>` : '';
+    // allMerged 只處理「全部同一組、且是 low-risk」的情況；一組裡剛好塞進
+    // 全部七個地名但 tier 是 risk（同分同風險備註）時 allMerged 不會觸發，
+    // 用 formatAreaList 收斂成「全區域」，不要逐一列出七個地名
     return `<div class="rank-row">
-      <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${g.labels.join('、')}</span><span class="rank-score">${c.emoji} ${g.score}分</span></div>
+      <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${formatAreaList(g.labels, Object.keys(DIRECTION_TOWNS))}</span><span class="rank-score">${c.emoji} ${g.score}分</span></div>
       ${statusHtml}
     </div>`;
   });
@@ -1462,7 +1465,7 @@ function renderRankList(wlAdvice, buckets, dayWordFormal) {
   if (unscored.length) {
     const medal = RANK_MEDALS[groups.length] || `${groups.length + 1}`;
     rows.push(`<div class="rank-row">
-      <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${unscored.map(e => e.label).join('、')}</span><span class="rank-score">—</span></div>
+      <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${formatAreaList(unscored.map(e => e.label), Object.keys(DIRECTION_TOWNS))}</span><span class="rank-score">—</span></div>
       <div class="rank-status">資料尚未就緒</div>
     </div>`);
   }
