@@ -1847,9 +1847,17 @@ function renderDebugWeatherPanel() {
       });
       lines.push(`    格點慣例假設比對: ${parts.join('  ')}`);
     }
+    if (debugEntry?.nearby) {
+      const nearbyParts = Object.entries(debugEntry.nearby).map(([key, hit]) => {
+        if (!hit) return `${key}=±3格內找不到`;
+        return `${key}=偏移(dx=${hit.dx},dy=${hit.dy})值=${hit.v}`;
+      });
+      lines.push(`    ±3格鄰近搜尋: ${nearbyParts.join('  ')}`);
+    }
   }
   lines.push('');
-  lines.push('（如果目前有方向正在下雨卻全部是 -99，看上面哪一組假設在該方向拿到「非 -99」的合理數值，那組才是正確方向）');
+  lines.push('（如果目前有方向正在下雨卻全部是 -99，看上面哪一組假設在該方向拿到「非 -99」的合理數值，那組才是正確方向；');
+  lines.push('如果精確那一格是 -99 但附近搜尋找得到，代表只是差一兩格沒對到；如果附近整片都找不到，問題不只是差一兩格）');
 
   panel.textContent = lines.join('\n');
 }
@@ -2032,6 +2040,42 @@ function gridHypotheses(lat, lon) {
   };
 }
 
+// 四種假設在「精確那一格」都是 -99，還不能排除「只是差一兩格沒對到」——
+// 這個函式在每種假設各自的排列方式下，往外搜尋 ±range 格，回傳距離最近的
+// 非 -99 值（連同偏移量）。附近找得到 → 大概是索引/座標還差一點點；
+// 附近整片都找不到 → 問題不是差一兩格這麼簡單，可能整個時間片段這裡就是
+// 沒有預報值，或格點慣例假設本身的方向還是不對
+function searchNearbyValid(values, lat, lon, range) {
+  const x = Math.round((lon - FB0046_GRID.startLon) / FB0046_GRID.resolution);
+  const yFromSouth = Math.round((lat - FB0046_GRID.startLat) / FB0046_GRID.resolution);
+  const yFromNorth = Math.round((FB0046_LAT_MAX - lat) / FB0046_GRID.resolution);
+  const inBounds = (xx, yy) => xx >= 0 && xx < FB0046_GRID.dimX && yy >= 0 && yy < FB0046_GRID.dimY;
+
+  function scan(baseX, baseY, rowMajor) {
+    let best = null;
+    for (let dy = -range; dy <= range; dy++) {
+      for (let dx = -range; dx <= range; dx++) {
+        const xx = baseX + dx, yy = baseY + dy;
+        if (!inBounds(xx, yy)) continue;
+        const idx = rowMajor ? yy * FB0046_GRID.dimX + xx : xx * FB0046_GRID.dimY + yy;
+        const v = values[idx];
+        if (v !== undefined && !Number.isNaN(v) && v !== -99) {
+          const dist = Math.abs(dx) + Math.abs(dy);
+          if (!best || dist < best.dist) best = { dx, dy, v, dist };
+        }
+      }
+    }
+    return best;
+  }
+
+  return {
+    A_南到北_列優先: scan(x, yFromSouth, true),
+    B_北到南_列優先: scan(x, yFromNorth, true),
+    C_南到北_欄優先: scan(x, yFromSouth, false),
+    D_北到南_欄優先: scan(x, yFromNorth, false),
+  };
+}
+
 // 無效值 -99（海洋/無回波區域），跟其他資料源的無效值處理方式一致。
 // 同時把「總共解析出幾個值」跟「每個方向拿到的原始值（不遮蔽 -99）」存進
 // cachedShortRainDebug，讓 debug 面板能分辨：是陣列長度就不對（split 有
@@ -2056,7 +2100,8 @@ function buildShortRainLayer(contentStr, townCoords) {
     for (const [key, hidx] of Object.entries(hyp)) {
       hypValues[key] = hidx !== null ? values[hidx] : undefined;
     }
-    perTown[label] = { idx, raw: v, hyp, hypValues, coord };
+    const nearby = searchNearbyValid(values, coord.lat, coord.lon, 3);
+    perTown[label] = { idx, raw: v, hyp, hypValues, coord, nearby };
     result[label] = (v === undefined || Number.isNaN(v) || v === -99) ? null : v;
   }
   cachedShortRainDebug = { totalValues: values.length, perTown };
