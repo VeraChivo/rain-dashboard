@@ -1801,11 +1801,22 @@ function renderDebugWeatherPanel() {
   }
   const srfCount = Object.values(cachedShortRainLayer).filter(v => v !== null && v !== undefined).length;
   lines.push(`共 ${srfCount}/${Object.keys(TOWN_COORDS).length} 個方向取到有效值（抓不到 content 字串或格點越界時全部會是「無資料」）`);
+  if (cachedShortRainDebug) {
+    const expectedTotal = FB0046_GRID.dimX * FB0046_GRID.dimY;
+    const lenOk = cachedShortRainDebug.totalValues === expectedTotal;
+    lines.push(`實際解析出 ${cachedShortRainDebug.totalValues} 個值（預期 ${expectedTotal} = ${FB0046_GRID.dimX}×${FB0046_GRID.dimY}）${lenOk ? '✅ 長度相符' : '⚠ 長度不符，content 字串可能不是這個格點資料，或 split 有問題'}`);
+  } else {
+    lines.push('（cachedShortRainDebug 是空的——本次 fetchAll 沒有成功解析過，不是資料集本身沒資料）');
+  }
   lines.push('');
   for (const [label, coord] of Object.entries(TOWN_COORDS)) {
     const idx = gridIndexForCoord(coord.lat, coord.lon);
     const mm = cachedShortRainLayer[label];
-    lines.push(`── ${label}（lat=${coord.lat}, lon=${coord.lon}）→ 格點索引=${idx ?? '越界'} → ${mm === null || mm === undefined ? '無資料' : mm.toFixed(1) + 'mm'}`);
+    const debugEntry = cachedShortRainDebug?.perTown?.[label];
+    // raw 是「-99 沒有被遮蔽成無資料」的真實解析值，用來分辨「真的是 -99
+    // 無回波」還是「根本沒解析到東西（undefined/NaN）」
+    const rawStr = debugEntry ? `（原始值=${debugEntry.raw === undefined ? '陣列裡沒這個索引' : Number.isNaN(debugEntry.raw) ? 'NaN（split/parseFloat 失敗）' : debugEntry.raw}）` : '';
+    lines.push(`── ${label}（lat=${coord.lat}, lon=${coord.lon}）→ 格點索引=${idx ?? '越界'} → ${mm === null || mm === undefined ? '無資料' : mm.toFixed(1) + 'mm'} ${rawStr}`);
   }
 
   panel.textContent = lines.join('\n');
@@ -1951,16 +1962,26 @@ function gridIndexForCoord(lat, lon) {
   return y * FB0046_GRID.dimX + x;
 }
 
-// 無效值 -99（海洋/無回波區域），跟其他資料源的無效值處理方式一致
+// 無效值 -99（海洋/無回波區域），跟其他資料源的無效值處理方式一致。
+// 同時把「總共解析出幾個值」跟「每個方向拿到的原始值（不遮蔽 -99）」存進
+// cachedShortRainDebug，讓 debug 面板能分辨：是陣列長度就不對（split 有
+// 問題）、還是格點索引真的都落在 -99，兩者現在的正式顯示（都是「無資料」）
+// 看起來一樣，但診斷面板不該遮蔽這個差異
+let cachedShortRainDebug = null;
+
 function buildShortRainLayer(contentStr) {
   const result = {};
+  cachedShortRainDebug = null;
   if (!contentStr) return result;
   const values = contentStr.split(',').map(Number);
+  const perTown = {};
   for (const [label, coord] of Object.entries(TOWN_COORDS)) {
     const idx = gridIndexForCoord(coord.lat, coord.lon);
     const v = idx !== null ? values[idx] : undefined;
+    perTown[label] = { idx, raw: v };
     result[label] = (v === undefined || Number.isNaN(v) || v === -99) ? null : v;
   }
+  cachedShortRainDebug = { totalValues: values.length, perTown };
   return result;
 }
 
