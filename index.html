@@ -1817,7 +1817,17 @@ function renderDebugWeatherPanel() {
     // 無回波」還是「根本沒解析到東西（undefined/NaN）」
     const rawStr = debugEntry ? `（原始值=${debugEntry.raw === undefined ? '陣列裡沒這個索引' : Number.isNaN(debugEntry.raw) ? 'NaN（split/parseFloat 失敗）' : debugEntry.raw}）` : '';
     lines.push(`── ${label}（lat=${coord.lat}, lon=${coord.lon}）→ 格點索引=${idx ?? '越界'} → ${mm === null || mm === undefined ? '無資料' : mm.toFixed(1) + 'mm'} ${rawStr}`);
+    if (debugEntry?.hyp) {
+      const parts = Object.entries(debugEntry.hyp).map(([key, hidx]) => {
+        const v = debugEntry.hypValues[key];
+        const vStr = hidx === null ? '越界' : (v === undefined ? '無索引' : v);
+        return `${key}=${vStr}`;
+      });
+      lines.push(`    格點慣例假設比對: ${parts.join('  ')}`);
+    }
   }
+  lines.push('');
+  lines.push('（如果目前有方向正在下雨卻全部是 -99，看上面哪一組假設在該方向拿到「非 -99」的合理數值，那組才是正確方向）');
 
   panel.textContent = lines.join('\n');
 }
@@ -1962,6 +1972,26 @@ function gridIndexForCoord(lat, lon) {
   return y * FB0046_GRID.dimX + x;
 }
 
+// 全部七個地方都拿到 -99，但同一時間 O-A0002 雨量站顯示六個地方都在下雨
+// ——兩者矛盾，代表不是「這裡真的沒有回波」，是格點索引公式本身猜錯了
+// （方向或攤平順序）。與其再猜一次直接改掉，這裡把幾種常見的格點慣例
+// 全部算出來，讓 debug 面板同時顯示，用「已知現在真的在下雨的座標」當
+// ground truth 反推哪一種假設是對的，不用再猜第二次
+const FB0046_LAT_MAX = FB0046_GRID.startLat + FB0046_GRID.dimY * FB0046_GRID.resolution;
+
+function gridHypotheses(lat, lon) {
+  const x = Math.round((lon - FB0046_GRID.startLon) / FB0046_GRID.resolution);
+  const yFromSouth = Math.round((lat - FB0046_GRID.startLat) / FB0046_GRID.resolution);
+  const yFromNorth = Math.round((FB0046_LAT_MAX - lat) / FB0046_GRID.resolution);
+  const inBounds = (xx, yy) => xx >= 0 && xx < FB0046_GRID.dimX && yy >= 0 && yy < FB0046_GRID.dimY;
+  return {
+    A_南到北_列優先: inBounds(x, yFromSouth) ? yFromSouth * FB0046_GRID.dimX + x : null,
+    B_北到南_列優先: inBounds(x, yFromNorth) ? yFromNorth * FB0046_GRID.dimX + x : null,
+    C_南到北_欄優先: inBounds(x, yFromSouth) ? x * FB0046_GRID.dimY + yFromSouth : null,
+    D_北到南_欄優先: inBounds(x, yFromNorth) ? x * FB0046_GRID.dimY + yFromNorth : null,
+  };
+}
+
 // 無效值 -99（海洋/無回波區域），跟其他資料源的無效值處理方式一致。
 // 同時把「總共解析出幾個值」跟「每個方向拿到的原始值（不遮蔽 -99）」存進
 // cachedShortRainDebug，讓 debug 面板能分辨：是陣列長度就不對（split 有
@@ -1978,7 +2008,12 @@ function buildShortRainLayer(contentStr) {
   for (const [label, coord] of Object.entries(TOWN_COORDS)) {
     const idx = gridIndexForCoord(coord.lat, coord.lon);
     const v = idx !== null ? values[idx] : undefined;
-    perTown[label] = { idx, raw: v };
+    const hyp = gridHypotheses(coord.lat, coord.lon);
+    const hypValues = {};
+    for (const [key, hidx] of Object.entries(hyp)) {
+      hypValues[key] = hidx !== null ? values[hidx] : undefined;
+    }
+    perTown[label] = { idx, raw: v, hyp, hypValues };
     result[label] = (v === undefined || Number.isNaN(v) || v === -99) ? null : v;
   }
   cachedShortRainDebug = { totalValues: values.length, perTown };
