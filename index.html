@@ -2027,16 +2027,35 @@ function gridIndexForCoord(lat, lon) {
 // ground truth 反推哪一種假設是對的，不用再猜第二次
 const FB0046_LAT_MAX = FB0046_GRID.startLat + FB0046_GRID.dimY * FB0046_GRID.resolution;
 
+// A~D 全部落空後，發現一件之前沒測過的事：dimX=441／dimY=561 配上
+// StartLat=20／StartLon=118／Resolution=0.0125 反推地理範圍時，
+// 「dimX=緯度格數、dimY=經度格數」（20~25.5°N、118~125°E，很乾淨的
+// 台灣周邊範圍）比「dimX=經度格數、dimY=緯度格數」（118~123.5°E、
+// 20~27.0°N，27°N 已經超出台灣本島太多）合理得多——代表 A~D 全部都
+// 猜錯了同一件事：預設「X＝經度」「Y＝緯度」，但這個資料集的
+// GridDimensionX/Y 命名可能剛好是反過來的（X 對應緯度、Y 對應經度）。
+// E/F 是這個新假設，緯度方向還不確定，兩種都測
+const FB0046_LAT_MAX_IF_X_IS_LAT = FB0046_GRID.startLat + FB0046_GRID.dimX * FB0046_GRID.resolution;
+
 function gridHypotheses(lat, lon) {
   const x = Math.round((lon - FB0046_GRID.startLon) / FB0046_GRID.resolution);
   const yFromSouth = Math.round((lat - FB0046_GRID.startLat) / FB0046_GRID.resolution);
   const yFromNorth = Math.round((FB0046_LAT_MAX - lat) / FB0046_GRID.resolution);
   const inBounds = (xx, yy) => xx >= 0 && xx < FB0046_GRID.dimX && yy >= 0 && yy < FB0046_GRID.dimY;
+
+  // E/F：緯度用 dimX（441格，20~25.5°N），經度用 dimY（561格，118~125°E）
+  const lonCol = Math.round((lon - FB0046_GRID.startLon) / FB0046_GRID.resolution);
+  const latRowFromSouth = Math.round((lat - FB0046_GRID.startLat) / FB0046_GRID.resolution);
+  const latRowFromNorth = Math.round((FB0046_LAT_MAX_IF_X_IS_LAT - lat) / FB0046_GRID.resolution);
+  const inBoundsSwapped = (row, col) => row >= 0 && row < FB0046_GRID.dimX && col >= 0 && col < FB0046_GRID.dimY;
+
   return {
     A_南到北_列優先: inBounds(x, yFromSouth) ? yFromSouth * FB0046_GRID.dimX + x : null,
     B_北到南_列優先: inBounds(x, yFromNorth) ? yFromNorth * FB0046_GRID.dimX + x : null,
     C_南到北_欄優先: inBounds(x, yFromSouth) ? x * FB0046_GRID.dimY + yFromSouth : null,
     D_北到南_欄優先: inBounds(x, yFromNorth) ? x * FB0046_GRID.dimY + yFromNorth : null,
+    E_緯度為X軸_南到北: inBoundsSwapped(latRowFromSouth, lonCol) ? latRowFromSouth * FB0046_GRID.dimY + lonCol : null,
+    F_緯度為X軸_北到南: inBoundsSwapped(latRowFromNorth, lonCol) ? latRowFromNorth * FB0046_GRID.dimY + lonCol : null,
   };
 }
 
@@ -2068,11 +2087,38 @@ function searchNearbyValid(values, lat, lon, range) {
     return best;
   }
 
+  // E/F：緯度用 dimX（bound）、經度用 dimY（bound），index = latRow*dimY+lonCol，
+  // 跟 gridHypotheses 裡 E/F 的算法對應——見上面 gridHypotheses 的說明
+  const lonCol = x;
+  const latRowFromSouth = yFromSouth;
+  const latRowFromNorth = Math.round((FB0046_LAT_MAX_IF_X_IS_LAT - lat) / FB0046_GRID.resolution);
+  const inBoundsSwapped = (row, col) => row >= 0 && row < FB0046_GRID.dimX && col >= 0 && col < FB0046_GRID.dimY;
+
+  function scanSwapped(baseRow, baseCol) {
+    let best = null;
+    for (let dCol = -range; dCol <= range; dCol++) {
+      for (let dRow = -range; dRow <= range; dRow++) {
+        const row = baseRow + dRow, col = baseCol + dCol;
+        if (!inBoundsSwapped(row, col)) continue;
+        const idx = row * FB0046_GRID.dimY + col;
+        const v = values[idx];
+        if (v !== undefined && !Number.isNaN(v) && v !== -99) {
+          const dist = Math.abs(dRow) + Math.abs(dCol);
+          // dx/dy 統一用經度/緯度方向命名，跟 A~D 的輸出格式一致方便比對
+          if (!best || dist < best.dist) best = { dx: dCol, dy: dRow, v, dist };
+        }
+      }
+    }
+    return best;
+  }
+
   return {
     A_南到北_列優先: scan(x, yFromSouth, true),
     B_北到南_列優先: scan(x, yFromNorth, true),
     C_南到北_欄優先: scan(x, yFromSouth, false),
     D_北到南_欄優先: scan(x, yFromNorth, false),
+    E_緯度為X軸_南到北: scanSwapped(latRowFromSouth, lonCol),
+    F_緯度為X軸_北到南: scanSwapped(latRowFromNorth, lonCol),
   };
 }
 
