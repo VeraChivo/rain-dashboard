@@ -117,19 +117,16 @@
   .source-note a{color:var(--accent);text-decoration:none}
   /* 輔助資訊分組：收合卡片間距縮小，跟主表格拉開一點距離 */
   .extras-group{display:flex;flex-direction:column;gap:8px;margin-top:24px}
-  .extras-group .rmv-card,.extras-group .radar-section{margin-bottom:0}
+  .extras-group .srf-card,.extras-group .radar-section{margin-bottom:0}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-  /* 雨胞移動方向文字報告 */
-  .rmv-card{background:linear-gradient(135deg,rgba(124,92,252,.06),rgba(47,111,237,.06));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
-  .rmv-title{font-size:.82rem;font-weight:700;color:var(--accent2);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;cursor:pointer}
-  .rmv-body{margin-top:8px}
-  .rmv-movement{font-size:.9rem;font-weight:700;color:var(--text);margin-bottom:2px;line-height:1.7}
-  .rmv-movement strong{color:var(--accent2)}
-  .rmv-divider{border:none;border-top:1px solid var(--border);margin:8px 0}
-  .rmv-label{font-size:.75rem;color:var(--muted);margin-bottom:6px;font-family:'JetBrains Mono',monospace}
-  .rmv-route{font-size:.82rem;color:var(--text);margin-bottom:5px;padding-left:2px;line-height:1.5}
-  .rmv-note{font-size:.7rem;color:var(--muted);display:block;padding-left:14px}
-  .rmv-time{font-size:.7rem;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:8px}
+  /* 短時雨勢預警（F-B0046-001）：Priority 2，只顯示原始 mm，還沒有正式門檻/文案 */
+  .srf-card{background:linear-gradient(135deg,rgba(124,92,252,.06),rgba(47,111,237,.06));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
+  .srf-title{font-size:.82rem;font-weight:700;color:var(--accent2);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;cursor:pointer}
+  .srf-body{margin-top:8px}
+  .srf-note{font-size:.72rem;color:var(--muted);margin-bottom:10px;line-height:1.5}
+  .srf-row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;font-size:.82rem}
+  .srf-loc{font-weight:700;color:var(--text);font-family:'JetBrains Mono',monospace}
+  .srf-mm{color:var(--muted);font-family:'JetBrains Mono',monospace}
 </style>
 </head>
 <body>
@@ -202,10 +199,13 @@
 
 <!-- 輔助資訊：目前較少用到，收合並集中放在最下面，不影響一打開先看到主表格 -->
 <div class="extras-group">
-  <!-- 🌬 雨胞移動方向（風向推算）：目前風速資料常缺 -->
-  <details class="rmv-card">
-    <summary class="rmv-title">🌬 雨胞移動方向</summary>
-    <div id="rainMovementCard" class="rmv-body"><span style="color:var(--muted)">載入中…</span></div>
+  <!-- 🌧 短時雨勢預警（F-B0046-001，未來1小時 QPESUMS 定量降雨預報）：
+       Priority 2，取代原本的雨胞移動方向（地面風平均值瞎猜，資料常缺、
+       跟午後對流胞實際移動方向常常對不上）。門檻/文案規則還沒定案，
+       先只顯示原始格點預估值 -->
+  <details class="srf-card">
+    <summary class="srf-title">🌧 短時雨勢預警（未來1小時，測試中）</summary>
+    <div id="shortRainCard" class="srf-body"><span style="color:var(--muted)">載入中…</span></div>
   </details>
 
   <!-- 📡 雷達回波：目前圖片常無法載入（CORS/防盜連） -->
@@ -1787,6 +1787,19 @@ function renderDebugWeatherPanel() {
     lines.push('');
   }
 
+  // 短時雨勢預警診斷（F-B0046-001）：格點值巢狀路徑、格點索引都還沒
+  // 100% 用真實回應核對過，這裡列出每個方向換算出的格點索引跟取到的值，
+  // 方便判斷是 fetch 失敗、content 字串沒找到、還是座標換算錯了格點
+  lines.push('═══ 短時雨勢預警診斷（F-B0046-001） ═══', '');
+  const srfCount = Object.values(cachedShortRainLayer).filter(v => v !== null && v !== undefined).length;
+  lines.push(`共 ${srfCount}/${Object.keys(TOWN_COORDS).length} 個方向取到有效值（抓不到 content 字串或格點越界時全部會是「無資料」）`);
+  lines.push('');
+  for (const [label, coord] of Object.entries(TOWN_COORDS)) {
+    const idx = gridIndexForCoord(coord.lat, coord.lon);
+    const mm = cachedShortRainLayer[label];
+    lines.push(`── ${label}（lat=${coord.lat}, lon=${coord.lon}）→ 格點索引=${idx ?? '越界'} → ${mm === null || mm === undefined ? '無資料' : mm.toFixed(1) + 'mm'}`);
+  }
+
   panel.textContent = lines.join('\n');
 }
 
@@ -1815,7 +1828,7 @@ function computeDirectionScores(townSlots, now) {
 
 // directionAdvisor：CWA 3h 資料 → 各方向明細（CCTV 校正過的 currentPop/effectivePop）
 // 主卡片的行程建議/排序/時段提醒改由 buildWeatherLayerAdvice() + summarizeBucket()
-// （P1-2 finalScore）產生；這裡只保留 scores，給雨胞移動方向卡片顯示各方向降雨率用
+// （P1-2 finalScore）產生；這裡只用 noData 判斷資料是否齊全，scores 目前沒有其他消費者
 function directionAdvisor(townSlots, now) {
   const scores = computeDirectionScores(townSlots, now);
   const withData = scores.filter(s => s.currentPop !== null);
@@ -1854,7 +1867,6 @@ function updateAiReport(countyData) {
       itineraryEl.innerHTML = '<div class="itinerary-line">⚠ 降雨資料未載入，請稍後重新整理</div>';
       document.getElementById('rankList').innerHTML = '';
       document.getElementById('alertList').innerHTML = '';
-      updateRainMovementCard(calcRainVector(cachedWindStations), []);
       return;
     }
 
@@ -1864,10 +1876,6 @@ function updateAiReport(countyData) {
     renderItineraryText(buckets, effectiveNow, showTomorrow, dayWord);
     renderRankList(wlAdvice, buckets, dayWordFormal);
     renderAlertList(effectiveNow, dayWord);
-
-    // 雨胞移動方向卡片沿用同一批 CCTV 校正過的 scores
-    const rainVec = calcRainVector(cachedWindStations);
-    updateRainMovementCard(rainVec, advice.scores);
   } catch (e) {
     console.error('[updateAiReport]', e);
     itineraryEl.innerHTML = `<div class="itinerary-line">⚠ 資料處理失敗：${e.message}</div>`;
@@ -1876,132 +1884,94 @@ function updateAiReport(countyData) {
   }
 }
 
-// ─────────────────────────────────────────────
-// 雨胞移動方向：以 CWA 自動氣象站風向推算
-// ─────────────────────────────────────────────
-let cachedWindStations = [];
+// ═══════════════════════════════════════════════════════════════
+// F-B0046-001（QPESUMS 未來1小時定量降雨預報格點資料）— Priority 2
+// 短時雨勢預警層，取代原本用地面風向平均值瞎猜「雨胞移動方向」的做法
+// （地面風≠對流胞移動方向，夏季午後雷陣雨常常兩者對不上，資料也常缺）。
+// 目前只做「抓取 → 七鄉鎮格點取值 → 顯示原始 mm」，門檻/文案規則刻意
+// 不在這階段決定（SSOT 文件 Priority 2 段落列的三個開放問題，等有更多
+// 真實案例回看再定），先不要把 QPESUMS 的「預報量」誤當精確降雨量處理
+// ═══════════════════════════════════════════════════════════════
 
-// Approximate bearing from 新港 (home base) to each destination
-const TOWN_BEARING = {
-  溪口: 40,   // NE
-  民雄: 88,   // E
-  大林: 60,   // ENE
-  斗南: 45,   // NE
-  北港: 292,  // WNW
-  朴子: 231,  // SW
+// 格點定義（SSOT 已用真實 JSON 驗證過的固定值，資料集本身的網格定義，
+// 不隨每次請求變動，所以直接寫死，不用每次從回應裡重新解析）
+const FB0046_GRID = { startLon: 118, startLat: 20, resolution: 0.0125, dimX: 441, dimY: 561 };
+
+// 七鄉鎮公所概略座標（WGS84），用來換算最近格點；格點解析度 1.25km，
+// 座標本身若有數十~數百公尺誤差，換算出的格點索引可能因此偏移一格，
+// 這是目前設計已知、尚未解決的誤差來源（SSOT 開放問題之一）
+const TOWN_COORDS = {
+  新港: { lat: 23.5454, lon: 120.3651 },
+  溪口: { lat: 23.5744, lon: 120.3923 },
+  民雄: { lat: 23.5495, lon: 120.4321 },
+  朴子: { lat: 23.4609, lon: 120.2472 },
+  大林: { lat: 23.5978, lon: 120.4489 },
+  北港: { lat: 23.5686, lon: 120.3011 },
+  斗南: { lat: 23.6825, lon: 120.4814 },
 };
 
-const TOWN_DISTANCE_KM = {
-  溪口: 7,  民雄: 12, 大林: 20,
-  斗南: 23, 北港: 10, 朴子: 18,
-};
-
-async function fetchWindObs() {
-  const counties = ['嘉義縣', '雲林縣'];
-  const responses = await Promise.allSettled(
-    counties.map(c =>
-      fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Authorization=${KEY}&CountyName=${encodeURIComponent(c)}`)
-        .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    )
-  );
-  const stations = [];
-  for (const r of responses) {
-    if (r.status !== 'fulfilled') continue;
-    const list = r.value?.records?.Station;
-    if (!Array.isArray(list)) continue;
-    for (const s of list) {
-      const we = s.WeatherElement || s.weatherElement || {};
-      const wdir = we.WindDirection ?? we.WDIR;
-      const wspd = we.WindSpeed ?? we.WDSD;
-      if (typeof wdir === 'number' && typeof wspd === 'number' && wspd > 0 && wdir >= 0 && wdir <= 360) {
-        stations.push({ name: s.StationName, wdir, wspdMs: wspd });
-      }
+// 247,401 個值的逗號分隔字串藏在回應的哪個巢狀層級還沒 100% 確認過
+// （只驗證過欄位名稱是 content，深度沒逐字核對），遞迴找，不寫死路徑
+function findGridContentString(obj, depth) {
+  depth = depth || 0;
+  if (depth > 6 || !obj || typeof obj !== 'object') return null;
+  if (typeof obj.content === 'string' && obj.content.length > 10000) return obj.content;
+  for (const key of Object.keys(obj)) {
+    const v = obj[key];
+    if (v && typeof v === 'object') {
+      const found = findGridContentString(v, depth + 1);
+      if (found) return found;
     }
   }
-  return stations;
+  return null;
 }
 
-function calcRainVector(stations) {
-  if (!stations?.length) return null;
-  let sumU = 0, sumV = 0, count = 0;
-  for (const s of stations) {
-    // wdir = direction wind comes FROM → wind blows TOWARD (wdir+180)%360
-    const rad = ((s.wdir + 180) % 360) * Math.PI / 180;
-    sumU += s.wspdMs * Math.sin(rad);  // eastward
-    sumV += s.wspdMs * Math.cos(rad);  // northward
-    count++;
+// 2.7MB 單次回應，走 fileapi 舊路徑（標準路徑對這個代碼會 404，SSOT 已記錄）
+async function fetchShortRainForecast() {
+  const res = await fetch(`https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-B0046-001?Authorization=${KEY}&format=JSON`);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for F-B0046-001`);
+  const data = await res.json();
+  const contentStr = findGridContentString(data);
+  if (!contentStr) throw new Error('F-B0046-001 回應找不到格點 content 字串');
+  return contentStr;
+}
+
+function gridIndexForCoord(lat, lon) {
+  const x = Math.round((lon - FB0046_GRID.startLon) / FB0046_GRID.resolution);
+  const y = Math.round((lat - FB0046_GRID.startLat) / FB0046_GRID.resolution);
+  if (x < 0 || x >= FB0046_GRID.dimX || y < 0 || y >= FB0046_GRID.dimY) return null;
+  return y * FB0046_GRID.dimX + x;
+}
+
+// 無效值 -99（海洋/無回波區域），跟其他資料源的無效值處理方式一致
+function buildShortRainLayer(contentStr) {
+  const result = {};
+  if (!contentStr) return result;
+  const values = contentStr.split(',').map(Number);
+  for (const [label, coord] of Object.entries(TOWN_COORDS)) {
+    const idx = gridIndexForCoord(coord.lat, coord.lon);
+    const v = idx !== null ? values[idx] : undefined;
+    result[label] = (v === undefined || Number.isNaN(v) || v === -99) ? null : v;
   }
-  if (!count) return null;
-  const u = sumU / count, v = sumV / count;
-  const speedMs = Math.sqrt(u * u + v * v);
-  if (speedMs < 0.5) return null;
-  const movingToDeg = ((Math.atan2(u, v) * 180 / Math.PI) + 360) % 360;
-  const comingFromDeg = (movingToDeg + 180) % 360;
-  return { speedMs, speedKmh: speedMs * 3.6, movingToDeg, comingFromDeg };
+  return result;
 }
 
-function degToCompass(deg) {
-  const dirs = ['北', '東北', '東', '東南', '南', '西南', '西', '西北'];
-  return dirs[Math.round(((deg % 360) + 360) / 45) % 8];
-}
+let cachedShortRainLayer = {};
 
-function routeRisk(townBearing, comingFromDeg) {
-  // angle between travel direction and rain's source direction
-  // diff=0 → heading directly INTO rain  → MAX risk
-  // diff=180 → moving away from source  → best
-  const diff = Math.abs(((townBearing - comingFromDeg) + 180) % 360 - 180);
-  if (diff <= 45)  return { tag: '⚠ 高風險', score: 0, note: '方向正對雨胞來向，即將迎雨' };
-  if (diff <= 90)  return { tag: '△ 中風險', score: 1, note: '雨胞將從側面穿越路徑' };
-  if (diff <= 135) return { tag: '○ 低風險', score: 2, note: '方向偏離雨胞，相對安全' };
-  return          { tag: '✓ 最佳',   score: 3, note: '背向雨胞來源，緩衝時間最長' };
-}
-
-function estimateMinutes(townLabel, rainVec) {
-  const dist = TOWN_DISTANCE_KM[townLabel];
-  if (!dist || !rainVec || rainVec.speedKmh < 2) return null;
-  return Math.round(dist / rainVec.speedKmh * 60);
-}
-
-function updateRainMovementCard(rainVec, directionScores) {
-  const card = document.getElementById('rainMovementCard');
+// 只顯示原始預估值，不做任何門檻判斷或文案——規則設計是下一步，這裡
+// 刻意先不做，避免把還沒驗證過的門檻直接 commit 成正式邏輯
+function renderShortRainCard() {
+  const card = document.getElementById('shortRainCard');
   if (!card) return;
-
-  if (!rainVec) {
-    card.innerHTML = '<div style="font-size:.8rem;color:var(--muted)">風速資料未取得，無法推算雨胞移動方向</div>';
+  const entries = Object.entries(cachedShortRainLayer);
+  if (!entries.length) {
+    card.innerHTML = '<div style="font-size:.8rem;color:var(--muted)">資料未取得</div>';
     return;
   }
-
-  const fromDir = degToCompass(rainVec.comingFromDeg);
-  const toDir   = degToCompass(rainVec.movingToDeg);
-  const spd     = rainVec.speedKmh.toFixed(0);
-
-  const routes = Object.entries(TOWN_BEARING)
-    .map(([label, bearing]) => {
-      const risk  = routeRisk(bearing, rainVec.comingFromDeg);
-      const score = directionScores?.find(s => s.label === label);
-      const pop   = score?.currentPop ?? null;
-      const mins  = estimateMinutes(label, rainVec);
-      return { label, risk, pop, mins };
-    })
-    .sort((a, b) => b.risk.score - a.risk.score || (a.pop ?? 100) - (b.pop ?? 100));
-
-  const routeHtml = routes.map((r, i) => {
-    const popStr  = r.pop !== null ? `　降雨率 ${r.pop}%` : '';
-    const minsStr = r.mins !== null && r.risk.score <= 1
-      ? `　⏱ 約 ${r.mins} 分鐘後雨胞可能到達` : '';
-    return `<div class="rmv-route">${i + 1}. ${r.risk.tag} → 往<strong>${r.label}</strong>${popStr}
-      <span class="rmv-note">${r.risk.note}${minsStr}</span>
-    </div>`;
-  }).join('');
-
-  const now = new Date();
-  card.innerHTML = `
-    <div class="rmv-movement">雨從 <strong>${fromDir}</strong> 往 <strong>${toDir}</strong> 移動（風速約 <strong>${spd} km/h</strong>）</div>
-    <hr class="rmv-divider">
-    <div class="rmv-label">路線優先順序（依雨胞迴避風險排列）：</div>
-    ${routeHtml}
-    <div class="rmv-time">風向站資料更新：${pad(now.getHours())}:${pad(now.getMinutes())}</div>
-  `;
+  const rows = entries.map(([label, mm]) =>
+    `<div class="srf-row"><span class="srf-loc">${label}</span><span class="srf-mm">${mm === null ? '無資料' : mm.toFixed(1) + ' mm'}</span></div>`
+  ).join('');
+  card.innerHTML = `<div class="srf-note">未來1小時 QPESUMS 定量降雨預報格點值，門檻與文案規則尚未定案，先看原始數字</div>${rows}`;
 }
 
 function getRainColor(pct) {
@@ -2195,10 +2165,9 @@ async function fetchAll() {
   updateDateBadge();
 
   try {
-    const [chiayi, yunlin, windStations, chiayiUV, yunlinUV, heatRecords, alertRecords, rainStations] = await Promise.all([
+    const [chiayi, yunlin, chiayiUV, yunlinUV, heatRecords, alertRecords, rainStations, shortRainContent] = await Promise.all([
       fetchCounty('F-D0047-029'),
       fetchCounty('F-D0047-025'),
-      fetchWindObs().catch(e => { console.warn('[wind obs]', e.message); return []; }),
       // UV 資料源非核心必要資料，抓失敗不能拖垮整個 fetchAll——降雨資料才是主體
       fetchCounty('F-D0047-031').catch(e => { console.warn('[UV 嘉義]', e.message); return []; }),
       fetchCounty('F-D0047-027').catch(e => { console.warn('[UV 雲林]', e.message); return []; }),
@@ -2208,8 +2177,9 @@ async function fetchAll() {
       fetchWeatherAlerts().catch(e => { console.warn('[官方警特報]', e.message); return null; }),
       // 雨量站資料抓失敗就退回全部 unknown，不能拖垮整個 fetchAll
       fetchRainStations().catch(e => { console.warn('[雨量站]', e.message); return []; }),
+      // F-B0046 單次回應 2.7MB，非阻斷式抓取，失敗就整批顯示無資料
+      fetchShortRainForecast().catch(e => { console.warn('[短時雨勢預警]', e.message); return null; }),
     ]);
-    cachedWindStations = windStations;
 
     cachedCountyData = { 'F-D0047-029': chiayi, 'F-D0047-025': yunlin };
 
@@ -2251,6 +2221,14 @@ async function fetchAll() {
       renderCctvGrid();
     } catch (e) {
       console.warn('[雨量站 layer]', e.message);
+    }
+
+    // 短時雨勢預警：只顯示原始格點值，門檻/文案規則尚未定案
+    try {
+      cachedShortRainLayer = buildShortRainLayer(shortRainContent);
+      renderShortRainCard();
+    } catch (e) {
+      console.warn('[短時雨勢預警 layer]', e.message);
     }
 
     const allData = {};
