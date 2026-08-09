@@ -1003,7 +1003,7 @@ function representativeHeatWarning(labels, now) {
 function heatWarningClause(heatInfo) {
   if (!heatInfo) return null;
   const areaText = formatAreaList(heatInfo.labels, Object.keys(DIRECTION_TOWNS));
-  return `⚠️ ${areaText}熱傷害${heatInfo.worst}，避免久待戶外`;
+  return `⚠️ ${areaText} 熱傷害${heatInfo.worst}，避免久待戶外`;
 }
 
 // 沒有風險的時段：體感異常（悶熱/高溫）優先講，其次才是曝曬提醒，
@@ -1086,7 +1086,7 @@ function bucketNarrativeClause(bucketLabel, summary, now) {
   // 安全地點的完整名單已經在②地點排序清楚列出（含分數），這裡不用重複
   // 逐一唱名——同一句話裡兩份地名清單是「字太多」的主因，改成一句帶過。
   // 但「較穩定」只講了安全度，沒講舒適度，補上體感綜合成一句
-  let clause = `<strong>${bucketLabel}${pad(onsetHour)}:00後</strong>&nbsp;&nbsp;${riskyNames}${kind}風險增加`;
+  let clause = `<strong>${bucketLabel}${pad(onsetHour)}:00後</strong>&nbsp;&nbsp;${riskyNames} ${kind}風險增加`;
   if (summary.safe.length > 0) {
     clause += `<br>其餘地區較穩定${safeAreaComfortNote(summary.safe)}`;
   }
@@ -1127,7 +1127,7 @@ function schoolModeClause(buckets, dayWord) {
   }
   const names = afternoon.summary.risky.map(e => `<strong>${e.label}</strong>`).join(' ');
   const onsetHour = Math.min(...afternoon.summary.risky.map(e => e.startHour));
-  return `${pad(onsetHour)}:00後接送時段需留意${names}雨勢，建議準備雨具。`;
+  return `${pad(onsetHour)}:00後接送時段需留意 ${names} 雨勢，建議準備雨具。`;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1152,9 +1152,9 @@ function cctvConfirmationClause(riskyLabels) {
   }
   if (!best) return null; // 全部不確定 → 維持預報，不加文字
 
-  if (best.state === 'raining') return `目前雨量站顯示<strong>${best.label}</strong>已在降雨，建議延後外出。`;
-  if (best.state === 'wet') return `目前雨量站顯示<strong>${best.label}</strong>近期已有降雨，雨勢可能已開始，建議延後。`;
-  return `目前雨量站顯示<strong>${best.label}</strong>尚無降雨，可先安排出門。`;
+  if (best.state === 'raining') return `目前雨量站顯示 <strong>${best.label}</strong> 已在降雨，建議延後外出。`;
+  if (best.state === 'wet') return `目前雨量站顯示 <strong>${best.label}</strong> 近期已有降雨，雨勢可能已開始，建議延後。`;
+  return `目前雨量站顯示 <strong>${best.label}</strong> 尚無降雨，可先安排出門。`;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1199,9 +1199,9 @@ function officialAlertClause(labels) {
 
     if (confirmedLabel) {
       const stateText = cctvStates[confirmedLabel] === 'raining' ? '已在降雨' : '近期已有降雨';
-      return `⚠️ <strong>${county}</strong>${alertText}生效中<br>雨量站顯示<strong>${confirmedLabel}</strong>${stateText}，建議延後外出`;
+      return `⚠️ <strong>${county}</strong> ${alertText}生效中<br>雨量站顯示 <strong>${confirmedLabel}</strong> ${stateText}，建議延後外出`;
     }
-    return `ℹ️ <strong>${county}</strong>${alertText}生效中，建議留意天候變化`;
+    return `ℹ️ <strong>${county}</strong> ${alertText}生效中，建議留意天候變化`;
   }
   return null;
 }
@@ -1543,7 +1543,7 @@ function periodAlertText(period) {
   if (period.isSingle) {
     return {
       timeLabel: `${firstLabel}左右`,
-      text: `${names}可能出現${kind}`,
+      text: `${names} 可能出現${kind}`,
       advice: `建議${firstLabel}前完成戶外行程`,
     };
   }
@@ -1553,7 +1553,7 @@ function periodAlertText(period) {
   const advice = `戶外活動建議在${firstLabel}前完成`
     + (recoverLabel ? `，${recoverLabel}後趨緩，可再視天氣調整` : '');
 
-  return { timeLabel: `${firstLabel}～${lastLabel}`, text: `${names}${kind}機率增加`, advice };
+  return { timeLabel: `${firstLabel}～${lastLabel}`, text: `${names} ${kind}機率增加`, advice };
 }
 
 // ③ 渲染：今日注意時段（精確時段版本，跟①②用不同粒度的同一份底層資料）
