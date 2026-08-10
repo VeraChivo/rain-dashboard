@@ -1841,6 +1841,12 @@ function renderDebugWeatherPanel() {
     // 無回波」還是「根本沒解析到東西（undefined/NaN）」
     const rawStr = debugEntry ? `（原始值=${debugEntry.raw === undefined ? '陣列裡沒這個索引' : Number.isNaN(debugEntry.raw) ? 'NaN（split/parseFloat 失敗）' : debugEntry.raw}）` : '';
     lines.push(`── ${label}（lat=${coord.lat}, lon=${coord.lon}, 座標來源=${coord.source || '?'}）→ 格點索引=${idx ?? '越界'} → ${mm === null || mm === undefined ? '無資料' : mm.toFixed(1) + 'mm'} ${rawStr}`);
+    if (debugEntry?.nearby) {
+      const n = debugEntry.nearby;
+      lines.push(`    ±3格鄰近搜尋: 偏移(緯度${n.dRow >= 0 ? '+' : ''}${n.dRow}格, 經度${n.dCol >= 0 ? '+' : ''}${n.dCol}格) 值=${n.v}mm`);
+    } else if (debugEntry) {
+      lines.push('    ±3格鄰近搜尋: 找不到任何非 -99 的值');
+    }
   }
 
   panel.textContent = lines.join('\n');
@@ -2025,6 +2031,31 @@ function gridIndexForCoord(lat, lon) {
   return latRow * FB0046_GRID.lonCount + lonCol;
 }
 
+// 格點公式已經用官方文件確認過，不再是「猜的」；但公式對，不代表 M-A0085
+// 提供的「鄉鎮代表座標」剛好等於 O-A0002 雨量站的實際位置——兩者是完全不同
+// 的兩個點（一個是鄉鎮行政中心，一個是氣象站實際座標），對零星、範圍很小的
+// 對流雨來說，代表座標跟真正下雨的格子差個 1~2 格（1.25~2.5km）是正常的。
+// 這個函式在確認過的格點慣例下往外搜尋 ±range 格，找最近的非 -99 值，
+// 用來分辨「附近其實有雨，只是代表座標沒對準」還是「這一整片真的沒有」
+function searchNearbyValid(values, lat, lon, range) {
+  const lonCol = Math.round((lon - FB0046_GRID.startLon) / FB0046_GRID.resolution);
+  const latRow = Math.round((lat - FB0046_GRID.startLat) / FB0046_GRID.resolution);
+  let best = null;
+  for (let dRow = -range; dRow <= range; dRow++) {
+    for (let dCol = -range; dCol <= range; dCol++) {
+      const row = latRow + dRow, col = lonCol + dCol;
+      if (row < 0 || row >= FB0046_GRID.latCount || col < 0 || col >= FB0046_GRID.lonCount) continue;
+      const idx = row * FB0046_GRID.lonCount + col;
+      const v = values[idx];
+      if (v !== undefined && !Number.isNaN(v) && v !== -99) {
+        const dist = Math.abs(dRow) + Math.abs(dCol);
+        if (!best || dist < best.dist) best = { dRow, dCol, v, dist };
+      }
+    }
+  }
+  return best;
+}
+
 // 無效值 -99（海洋/無回波區域），跟其他資料源的無效值處理方式一致。
 // 同時把「總共解析出幾個值」跟「每個方向拿到的原始值（不遮蔽 -99）」存進
 // cachedShortRainDebug，讓 debug 面板能分辨：是陣列長度就不對（split 有
@@ -2044,7 +2075,8 @@ function buildShortRainLayer(contentStr, townCoords) {
   for (const [label, coord] of Object.entries(coords)) {
     const idx = gridIndexForCoord(coord.lat, coord.lon);
     const v = idx !== null ? values[idx] : undefined;
-    perTown[label] = { idx, raw: v, coord };
+    const nearby = searchNearbyValid(values, coord.lat, coord.lon, 3);
+    perTown[label] = { idx, raw: v, coord, nearby };
     result[label] = (v === undefined || Number.isNaN(v) || v === -99) ? null : v;
   }
   cachedShortRainDebug = { totalValues: values.length, perTown };
