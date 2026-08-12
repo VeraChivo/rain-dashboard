@@ -84,7 +84,7 @@
   .rank-loc{font-weight:700;color:var(--text);min-width:36px}
   .rank-score{color:var(--muted)}
   .rank-status{font-size:.74rem;color:var(--muted);text-align:center;margin-top:2px}
-  /* ③ 今日注意時段 */
+  /* ③ 日間注意 */
   .alert-section{padding-top:12px;border-top:1px solid var(--border)}
   .alert-section-title{font-size:.76rem;font-weight:700;color:var(--red);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-align:center}
   .alert-row{margin-bottom:8px}
@@ -162,7 +162,7 @@
   </div>
 
   <div class="alert-section">
-    <div class="alert-section-title" id="alertSectionTitle">⏰ 今日注意時段</div>
+    <div class="alert-section-title" id="alertSectionTitle">⏰ 日間注意</div>
     <div id="alertList"></div>
   </div>
 </div>
@@ -1599,8 +1599,10 @@ function renderAlertList(now, dayWord) {
   const listEl = document.getElementById('alertList');
   if (!listEl) return;
 
+  // 標題不再區分「今日/明日」——過21:00整個卡片會切到明天視角，
+  // 用「日間注意」這種天不分的講法，不用另外提示使用者現在看的是哪一天
   const titleEl = document.getElementById('alertSectionTitle');
-  if (titleEl) titleEl.textContent = `⏰ ${dayWord === '明天' ? '明日' : '今日'}注意時段`;
+  if (titleEl) titleEl.textContent = '⏰ 日間注意';
 
   const periods = computeRiskPeriods(now);
 
