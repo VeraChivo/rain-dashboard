@@ -204,7 +204,7 @@
        跟午後對流胞實際移動方向常常對不上）。門檻/文案規則還沒定案，
        先只顯示原始格點預估值 -->
   <details class="srf-card">
-    <summary class="srf-title">🌧 短時雨勢預警（未來1小時，測試中）</summary>
+    <summary class="srf-title">🌧 短時雨勢預警（未來1小時，測試中）<span id="srfSummaryBadge" class="cctv-summary-badge"></span></summary>
     <div id="shortRainCard" class="srf-body"><span style="color:var(--muted)">載入中…</span></div>
   </details>
 
@@ -1852,7 +1852,8 @@ function renderDebugWeatherPanel() {
     // raw 是「-99 沒有被遮蔽成無資料」的真實解析值，用來分辨「真的是 -99
     // 無回波」還是「根本沒解析到東西（undefined/NaN）」
     const rawStr = debugEntry ? `（原始值=${debugEntry.raw === undefined ? '陣列裡沒這個索引' : Number.isNaN(debugEntry.raw) ? 'NaN（split/parseFloat 失敗）' : debugEntry.raw}）` : '';
-    lines.push(`── ${label}（lat=${coord.lat}, lon=${coord.lon}, 座標來源=${coord.source || '?'}）→ 格點索引=${idx ?? '越界'} → ${mm === null || mm === undefined ? '無資料' : mm.toFixed(1) + 'mm'} ${rawStr}`);
+    const mmDisplay = mm === null || mm === undefined ? '資料異常' : mm === -99 ? '沒雨' : mm.toFixed(1) + 'mm';
+    lines.push(`── ${label}（lat=${coord.lat}, lon=${coord.lon}, 座標來源=${coord.source || '?'}）→ 格點索引=${idx ?? '越界'} → ${mmDisplay} ${rawStr}`);
     if (debugEntry?.nearby) {
       const n = debugEntry.nearby;
       lines.push(`    ±3格鄰近搜尋: 偏移(緯度${n.dRow >= 0 ? '+' : ''}${n.dRow}格, 經度${n.dCol >= 0 ? '+' : ''}${n.dCol}格) 值=${n.v}mm`);
@@ -2089,7 +2090,11 @@ function buildShortRainLayer(contentStr, townCoords) {
     const v = idx !== null ? values[idx] : undefined;
     const nearby = searchNearbyValid(values, coord.lat, coord.lon, 3);
     perTown[label] = { idx, raw: v, coord, nearby };
-    result[label] = (v === undefined || Number.isNaN(v) || v === -99) ? null : v;
+    // -99 是官方明確定義的「無效值」（無回波），不是「抓取/解析失敗」——
+    // 這裡刻意不把兩者都收斂成 null，讓 renderShortRainCard 能分開顯示
+    // 「沒雨」跟「資料異常」，不要像之前的雨量站 bug 一樣把兩種意義不同
+    // 的情況顯示成同一句話
+    result[label] = (v === undefined || Number.isNaN(v)) ? null : v;
   }
   cachedShortRainDebug = { totalValues: values.length, perTown };
   return result;
@@ -2100,6 +2105,17 @@ let cachedShortRainLayer = {};
 // devtools console，把錯誤訊息直接放進面板比較好截圖回報
 let lastShortRainError = null;
 
+// 收合狀態下也要能一眼判斷要不要點開，跟現況確認同一套邏輯：有降雨就
+// 提示點開看看（細節要點開才看得到），全部沒雨就直接講「目前無降雨預報」，
+// 混雜「資料異常」（null）時不特別下結論，避免用不完整資料裝作有結論
+function shortRainSummaryBadge() {
+  const values = Object.values(cachedShortRainLayer);
+  if (!values.length) return null;
+  if (values.some(v => typeof v === 'number' && v !== -99)) return { text: '有降雨，點開看看', cls: 'alert' };
+  if (values.every(v => v === -99)) return { text: '目前無降雨預報', cls: 'calm' };
+  return null;
+}
+
 // 只顯示原始預估值，不做任何門檻判斷或文案——規則設計是下一步，這裡
 // 刻意先不做，避免把還沒驗證過的門檻直接 commit 成正式邏輯
 function renderShortRainCard() {
@@ -2108,12 +2124,23 @@ function renderShortRainCard() {
   const entries = Object.entries(cachedShortRainLayer);
   if (!entries.length) {
     card.innerHTML = '<div style="font-size:.8rem;color:var(--muted)">資料未取得</div>';
-    return;
+  } else {
+    // -99（官方無效值＝無回波）跟 null（抓取/解析失敗）分開顯示，不要
+    // 都寫成同一句「無資料」——沒雨跟資料異常是不同狀態，混在一起講
+    // 使用者會誤以為系統壞了，或反過來以為壞掉的資料是「真的沒下雨」
+    const rows = entries.map(([label, mm]) => {
+      const text = mm === null ? '資料異常' : mm === -99 ? '沒雨' : mm.toFixed(1) + ' mm';
+      return `<div class="srf-row"><span class="srf-loc">${label}</span><span class="srf-mm">${text}</span></div>`;
+    }).join('');
+    card.innerHTML = `<div class="srf-note">未來1小時 QPESUMS 定量降雨預報格點值，門檻與文案規則尚未定案，先看原始數字</div>${rows}`;
   }
-  const rows = entries.map(([label, mm]) =>
-    `<div class="srf-row"><span class="srf-loc">${label}</span><span class="srf-mm">${mm === null ? '無資料' : mm.toFixed(1) + ' mm'}</span></div>`
-  ).join('');
-  card.innerHTML = `<div class="srf-note">未來1小時 QPESUMS 定量降雨預報格點值，門檻與文案規則尚未定案，先看原始數字</div>${rows}`;
+
+  const badgeEl = document.getElementById('srfSummaryBadge');
+  if (badgeEl) {
+    const b = shortRainSummaryBadge();
+    badgeEl.textContent = b ? `（${b.text}）` : '';
+    badgeEl.className = 'cctv-summary-badge' + (b ? ' ' + b.cls : '');
+  }
 }
 
 function getRainColor(pct) {
