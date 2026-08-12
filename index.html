@@ -1333,9 +1333,19 @@ function renderItineraryText(buckets, now, showTomorrow, dayWord) {
     return;
   }
 
-  const clauses = buckets.map(b => bucketNarrativeClause(b.label, b.summary, now)).filter(Boolean);
-  const lines = clauses.map(c => `<div class="itinerary-line">${c}。</div>`);
-  if (cctvNote) lines.push(`<div class="itinerary-line cctv-confirm-line">${cctvNote}</div>`);
+  // cctvNote 緊接在它要確認的那個風險時段後面，不要放在整串最後——
+  // 放在最後會變成「下午有風險→晚上放晴→現在又在下雨」這種時序跳來跳去、
+  // 讀起來像互相矛盾的排法，其實 cctvNote 只跟最早的風險時段有關，
+  // 跟後面的晚上/其他安全時段無關
+  const lines = [];
+  for (const b of buckets) {
+    const c = bucketNarrativeClause(b.label, b.summary, now);
+    if (!c) continue;
+    lines.push(`<div class="itinerary-line">${c}。</div>`);
+    if (cctvNote && b === firstRiskyBucket) {
+      lines.push(`<div class="itinerary-line cctv-confirm-line">${cctvNote}</div>`);
+    }
+  }
   if (heatNote) lines.push(`<div class="itinerary-line heat-warning-line">${heatNote}</div>`);
   if (officialNote) lines.push(`<div class="itinerary-line official-alert-line">${officialNote}</div>`);
   el.innerHTML = lines.join('');
