@@ -21,6 +21,8 @@
   .btn-refresh{display:flex;align-items:center;gap:5px;padding:5px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--muted);font-family:'Noto Sans TC',sans-serif;font-size:.72rem;font-weight:600;cursor:pointer;transition:background .15s,border-color .15s,transform .1s}
   .btn-refresh:hover{background:var(--surface2);border-color:var(--accent);color:var(--accent)}
   .btn-refresh:active{transform:scale(.97)}
+  /* 手動覆寫中要一眼看得出來，否則暑輔設完忘了切回去，會整個月看到錯的模式 */
+  .btn-mode.is-manual{border-color:var(--accent2);color:var(--accent2);background:rgba(124,92,252,.08)}
   .btn-refresh:disabled{opacity:.5;cursor:not-allowed}
   .spinner{width:16px;height:16px;border:2px solid rgba(47,111,237,.25);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;display:none}
   .loading .spinner{display:block}
@@ -134,6 +136,8 @@
     <span class="spinner"></span>
     重新整理
   </button>
+  <!-- 寒暑輔／國定假日這種日期規則算不出來的情況，用這顆手動蓋過去 -->
+  <button class="btn-refresh btn-mode" id="modeBtn" onclick="cycleModeOverride()">載入中…</button>
 </div>
 
 <!-- 🛵 今天怎麼安排：三段式行程卡，取代舊的分數推薦 + 獨立雨勢提醒卡
@@ -1115,9 +1119,13 @@ const VACATION_RANGES = [
   { name: '寒假', from: [1, 20], to: [2, 10] },
 ];
 
-function isVacationDay(now) {
+function isWeekend(now) {
   const dow = now.getDay();
-  if (dow === 0 || dow === 6) return true; // 六日沒有接送
+  return dow === 0 || dow === 6;
+}
+
+// 只看寒暑假區間，不含週末
+function isVacationRange(now) {
   const md = (now.getMonth() + 1) * 100 + now.getDate();
   return VACATION_RANGES.some(r => {
     const from = r.from[0] * 100 + r.from[1];
@@ -1127,8 +1135,59 @@ function isVacationDay(now) {
   });
 }
 
+// 純日期規則的判斷（不含手動覆寫）
+function isVacationDay(now) {
+  return isWeekend(now) || isVacationRange(now);
+}
+
+// 手動覆寫：'auto' | 'school' | 'holiday'
+// 日期規則算不出來的兩種情況要靠它——寒暑輔（暑假期間其實要上課）跟
+// 國定假日（平日卻放假）。存 localStorage，關掉網頁再打開還在
+const MODE_OVERRIDE_KEY = 'rainDashboard.modeOverride';
+let manualModeOverride = 'auto';
+
+try {
+  const saved = localStorage.getItem(MODE_OVERRIDE_KEY);
+  if (saved === 'school' || saved === 'holiday') manualModeOverride = saved;
+} catch (e) { /* 無痕模式等情況存取不到就算了，維持 auto */ }
+
 function getLifeContextMode(now) {
-  return isVacationDay(now) ? 'holiday' : 'school';
+  // 六日一定是放假，手動覆寫也蓋不掉——暑輔設成「上課」之後忘記切回來時，
+  // 至少週末不會錯，把「忘記關」的傷害限制在平日
+  if (isWeekend(now)) return 'holiday';
+  if (manualModeOverride !== 'auto') return manualModeOverride;
+  return isVacationRange(now) ? 'holiday' : 'school';
+}
+
+const MODE_CYCLE = ['auto', 'school', 'holiday'];
+
+function cycleModeOverride() {
+  const i = MODE_CYCLE.indexOf(manualModeOverride);
+  manualModeOverride = MODE_CYCLE[(i + 1) % MODE_CYCLE.length];
+  try { localStorage.setItem(MODE_OVERRIDE_KEY, manualModeOverride); } catch (e) { /* 存不到不影響本次操作 */ }
+  renderModeButton();
+  updateAiReport(cachedCountyData); // ①要立刻換句子，不用等下次重新整理
+}
+
+// 按鈕同時顯示「現在是自動還是手動」跟「結果是上課還是放假」，
+// 手動時額外套 is-manual 樣式，避免忘記自己切過
+function renderModeButton() {
+  const btn = document.getElementById('modeBtn');
+  if (!btn) return;
+  const now = new Date();
+  const effective = getLifeContextMode(now);
+  const label = effective === 'school' ? '上課' : '放假';
+  if (manualModeOverride === 'auto') {
+    btn.textContent = `🔄 自動·${label}`;
+    btn.classList.remove('is-manual');
+    btn.title = '目前依日期自動判斷（六日與寒暑假為放假）。點一下改成手動指定，用於寒暑輔或國定假日';
+  } else {
+    // 週末時手動設定不生效，按鈕要誠實講出來，不要顯示成已生效
+    const overridden = isWeekend(now) && manualModeOverride === 'school';
+    btn.textContent = overridden ? `📌 手動·上課（六日不套用）` : `📌 手動·${label}`;
+    btn.classList.add('is-manual');
+    btn.title = '目前是手動指定，再點一下切換，切到「自動」即恢復依日期判斷';
+  }
 }
 
 // 上課模式只關心「接送時段」（下午）會不會下雨，不是整天行程規劃——
@@ -2426,6 +2485,7 @@ async function fetchAll() {
 }
 
 renderCctvGrid();
+renderModeButton();
 fetchAll();
 </script>
 </body>
