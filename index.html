@@ -37,7 +37,6 @@
   .status-msg.error{color:var(--red)}
 
   .section-title{font-size:.9rem;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace;margin:24px 0 8px 4px;letter-spacing:.05em}
-  .section-divider{border:none;border-top:1px solid var(--border);margin:28px 0}
 
   .day-section{margin-bottom:20px}
   .day-label{font-size:.82rem;font-weight:700;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:6px;padding-left:2px}
@@ -51,8 +50,6 @@
   tbody tr{border-bottom:1px solid var(--border);transition:background .15s}
   tbody tr:last-child{border-bottom:none}
   tbody tr:hover{background:var(--surface2)}
-  .now-row{background:rgba(47,111,237,.07)!important;border-left:3px solid var(--accent)}
-  .now-row td.time-cell{color:var(--accent);font-weight:700}
   td{padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:.8rem}
   td.time-cell{color:var(--muted);font-weight:600;white-space:nowrap}
   .rain-cell{border-radius:6px;font-weight:600;padding:7px 4px;min-width:48px;display:block;margin:0 auto}
@@ -237,7 +234,7 @@ const DIRECTION_TOWNS = {
   北港: { dataset: 'F-D0047-025', town: '北港鎮' },
 };
 
-// CCTV toggle 重算時用；fetchAll 成功後寫入
+// updateAiReport 重算①②③時用；fetchAll 成功後寫入
 let cachedCountyData = {};
 
 // 生活圈權重：越常去、越在意的方向權重越高（可依實際生活圈調整）
@@ -1878,7 +1875,7 @@ function directionAdvisor(townSlots, now) {
 }
 
 // countyData = { 'F-D0047-029': [...chiayi locs], 'F-D0047-025': [...yunlin locs] }
-// 由 fetchAll 傳入；CCTV toggle 用 cachedCountyData
+// 由 fetchAll 傳入，也可以直接吃 cachedCountyData 重算
 // 三段式行程卡：① AI 行程建議（自然語言）② 地點排序（透明度）③ 注意時段
 // 三段共用 computeDayBuckets() 同一份資料，不會出現互相矛盾的描述
 //
