@@ -157,7 +157,7 @@
   <div class="itinerary-text" id="itineraryText">載入中…</div>
 
   <div class="rank-section">
-    <div class="rank-section-title" id="rankSectionTitle">📍 今日地點排序</div>
+    <div class="rank-section-title" id="rankSectionTitle">📍 地點排序</div>
     <div id="rankList"></div>
   </div>
 
@@ -253,12 +253,12 @@ const COMPARE_HOURS = ['00:00','03:00','06:00','09:00','12:00','15:00','18:00','
 
 // 方向評分資料來源：直接複用 fetchAll 已抓的 3h 資料集（029/025），不另發 API
 // 好處：零額外請求、與主表同一資料批次、029/025 已驗證可用
+// 大林已移除（使用者確認生活圈權重不準，實際不會去），現在是六個方向
 const DIRECTION_TOWNS = {
   新港: { dataset: 'F-D0047-029', town: '新港鄉' },
   溪口: { dataset: 'F-D0047-029', town: '溪口鄉' },
   民雄: { dataset: 'F-D0047-029', town: '民雄鄉' },
   朴子: { dataset: 'F-D0047-029', town: '朴子市' },
-  大林: { dataset: 'F-D0047-029', town: '大林鎮' },
   斗南: { dataset: 'F-D0047-025', town: '斗南鎮' },
   北港: { dataset: 'F-D0047-025', town: '北港鎮' },
 };
@@ -267,7 +267,7 @@ const DIRECTION_TOWNS = {
 let cachedCountyData = {};
 
 // 生活圈權重：越常去、越在意的方向權重越高（可依實際生活圈調整）
-const DIRECTION_WEIGHTS = { 新港: 40, 溪口: 25, 斗南: 20, 民雄: 15, 朴子: 15, 大林: 10, 北港: 5 };
+const DIRECTION_WEIGHTS = { 新港: 40, 溪口: 25, 斗南: 20, 民雄: 15, 朴子: 15, 北港: 5 };
 
 // 現況即時校正：換算為有效降雨率的微調（±10/20%），佔最終分數 20%，
 // 保持 CWA 預報為主體。狀態來源已從手動 CCTV 判讀改成 O-A0002 雨量站
@@ -679,7 +679,7 @@ function buildWeatherLayerAdvice(now) {
 // 核心修正（使用者反覆確認過的重點）：
 //   1. 不是找「最壞的一個方向」代表整段，而是列出該時段「所有」
 //      有風險的方向，同時附上「該時段仍安全」的方向作為替代建議
-//      （例如：「溪口、民雄、新港雷雨風險增加，可優先考慮北港、大林」）
+//      （例如：「溪口、民雄、新港雷雨風險增加，可優先考慮北港、斗南」）
 //   2. 排名只回答「現在哪裡分數高」，行程建議要回答「今天怎麼安排」——
 //      兩者用同一份 computeDayBuckets() 資料，不會產生兩套判斷
 //   3. 不做視覺時間軸；資料翻成短句，讀起來像行程助理，不是氣象報告
@@ -826,8 +826,7 @@ function uvIndexToLevel(indexValue) {
 }
 
 const UV_TOWN_DATASET = {
-  新港: 'F-D0047-031', 溪口: 'F-D0047-031', 民雄: 'F-D0047-031',
-  朴子: 'F-D0047-031', 大林: 'F-D0047-031',
+  新港: 'F-D0047-031', 溪口: 'F-D0047-031', 民雄: 'F-D0047-031', 朴子: 'F-D0047-031',
   斗南: 'F-D0047-027', 北港: 'F-D0047-027',
 };
 
@@ -1231,7 +1230,7 @@ function officialAlertClause(labels) {
 
 // ═══════════════════════════════════════════════════════════════
 // O-A0002-001（雨量觀測站）— 取代手動 CCTV，自動判斷「現在有沒有下雨」
-// 七個鄉鎮都找到跟鄉鎮同名的中央氣象署官方站（新港/溪口/民雄/朴子/大林/
+// 六個鄉鎮都找到跟鄉鎮同名的中央氣象署官方站（新港/溪口/民雄/朴子/
 // 北港/斗南皆有專屬站），不用手動點按鈕，也不用像 F-B0046 那樣算網格。
 // 用 Now/Past10Min/Past1hr 雨量值換算成跟原本 CCTV 同一組狀態
 // （dry/wet/raining/unknown），沿用既有的 cctvStates／CCTV_POP_ADJ／
@@ -1424,14 +1423,16 @@ function comfortStatusText(thermalLevel, exposureLevel, dayWordFormal = '今日'
 // 群組化：分數、風險狀態、體感都相同的地點才合併成一列，不逐筆重複顯示
 // 排序：風險層優先（低風險一律排在需留意之前）；低風險層內用體感排序，
 // 分數只在體感相同時當次要排序依據——體感差異比幾分之差更能反映決策價值
-const RANK_MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣'];
+const RANK_MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣'];
 
+// 標題不分今日/明日，跟③日間注意同一種做法——過21:00切到明天視角時
+// 不用另外處理標題文字
 function renderRankList(wlAdvice, buckets, dayWordFormal) {
   const listEl = document.getElementById('rankList');
   if (!listEl) return;
 
   const titleEl = document.getElementById('rankSectionTitle');
-  if (titleEl) titleEl.textContent = `📍 ${dayWordFormal}地點排序`;
+  if (titleEl) titleEl.textContent = '📍 地點排序';
 
   if (wlAdvice.noData) {
     listEl.innerHTML = '<div class="rank-status">資料尚未就緒</div>';
@@ -1982,7 +1983,7 @@ const FB0046_GRID = {
   latCount: 441, // 官方欄位 GridDimensionX，實際是緯度格數（慢速變動軸）
 };
 
-// 七鄉鎮公所概略座標（WGS84）—— 只當 M-A0085 官方座標拿不到時的備援，
+// 六鄉鎮公所概略座標（WGS84）—— 只當 M-A0085 官方座標拿不到時的備援，
 // 不是主要來源了。這組是用一般地理知識估的，沒有精確查證過；已知跟
 // M-A0085 官方座標（例如新港鄉 23.55380058,120.33899690）有明顯落差，
 // 對 1.25km 格點解析度來說這種落差可能直接讓索引偏移到隔壁格
@@ -1991,7 +1992,6 @@ const FALLBACK_TOWN_COORDS = {
   溪口: { lat: 23.5744, lon: 120.3923 },
   民雄: { lat: 23.5495, lon: 120.4321 },
   朴子: { lat: 23.4609, lon: 120.2472 },
-  大林: { lat: 23.5978, lon: 120.4489 },
   北港: { lat: 23.5686, lon: 120.3011 },
   斗南: { lat: 23.6825, lon: 120.4814 },
 };
