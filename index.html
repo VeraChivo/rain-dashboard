@@ -32,15 +32,6 @@
   tbody tr:hover .loc-cell{background:var(--surface2)}
   .now-col-head{color:var(--accent)!important;background:rgba(47,111,237,.12)!important}
   .now-col-cell{background:rgba(47,111,237,.07)!important}
-  /* 雷達回波（收合區塊） */
-  .radar-section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:20px}
-  .radar-title{font-size:.9rem;font-weight:700;color:var(--accent);cursor:pointer}
-  .radar-body{margin-top:10px}
-  .radar-img{width:100%;border-radius:8px;display:block;min-height:120px;background:var(--surface2)}
-  .radar-error{display:none;text-align:center;padding:24px 12px;color:var(--muted);font-size:.78rem;line-height:1.8}
-  .radar-error a{color:var(--accent);text-decoration:none}
-  .radar-footer{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:.72rem;color:var(--muted);font-family:'JetBrains Mono',monospace}
-  .radar-footer a{color:var(--accent);text-decoration:none}
   .status-msg{font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;white-space:nowrap}
   .status-msg.ok{color:var(--green)}
   .status-msg.error{color:var(--red)}
@@ -117,7 +108,7 @@
   .source-note a{color:var(--accent);text-decoration:none}
   /* 輔助資訊分組：收合卡片間距縮小，跟主表格拉開一點距離 */
   .extras-group{display:flex;flex-direction:column;gap:8px;margin-top:24px}
-  .extras-group .srf-card,.extras-group .radar-section{margin-bottom:0}
+  .extras-group .srf-card{margin-bottom:0}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
   /* 短時雨勢預警（F-B0046-001）：Priority 2，只顯示原始 mm，還沒有正式門檻/文案 */
   .srf-card{background:linear-gradient(135deg,rgba(124,92,252,.06),rgba(47,111,237,.06));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
@@ -206,23 +197,6 @@
   <details class="srf-card">
     <summary class="srf-title">🌧 短時雨勢預警（未來1小時，測試中）<span id="srfSummaryBadge" class="cctv-summary-badge"></span></summary>
     <div id="shortRainCard" class="srf-body"><span style="color:var(--muted)">載入中…</span></div>
-  </details>
-
-  <!-- 📡 雷達回波：目前圖片常無法載入（CORS/防盜連） -->
-  <details class="radar-section">
-    <summary class="radar-title">📡 雷達回波｜即時降雨雲圖</summary>
-    <div class="radar-body">
-      <img id="radarImg" class="radar-img" alt="CWA雷達回波圖"
-           onerror="this.style.display='none';document.getElementById('radarError').style.display='block'" />
-      <div id="radarError" class="radar-error">
-        ⚠ 雷達圖無法載入<br>
-        <a href="https://www.cwa.gov.tw/V8/C/W/Radar.html" target="_blank">🔗 點此開啟 CWA 即時雷達</a>
-      </div>
-      <div class="radar-footer">
-        <span id="radarTime"></span>
-        <a href="https://www.cwa.gov.tw/V8/C/W/Radar.html" target="_blank">🔗 即時動態雷達</a>
-      </div>
-    </div>
   </details>
 </div>
 
@@ -2420,7 +2394,6 @@ async function fetchAll() {
     }
 
     renderAll(allData);
-    refreshRadar();
     setStatus('✓ 資料已更新', 'ok');
   } catch(e) {
     console.error('[fetchAll]', e);
@@ -2433,23 +2406,7 @@ async function fetchAll() {
   setLoading(false);
 }
 
-function refreshRadar() {
-  const img = document.getElementById('radarImg');
-  const timeEl = document.getElementById('radarTime');
-  const errEl = document.getElementById('radarError');
-  if (!img) return;
-  // Cache-bust so browser fetches latest image from CWA server
-  img.style.display = 'block';
-  if (errEl) errEl.style.display = 'none';
-  img.src = `https://www.cwa.gov.tw/Data/radar/CV1_3600_3600.png?_=${Date.now()}`;
-  if (timeEl) {
-    const t = new Date();
-    timeEl.textContent = `更新：${pad(t.getHours())}:${pad(t.getMinutes())}`;
-  }
-}
-
 renderCctvGrid();
-refreshRadar();
 fetchAll();
 </script>
 </body>
