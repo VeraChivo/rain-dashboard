@@ -136,11 +136,11 @@
   </button>
 </div>
 
-<!-- 🛵 出門去哪兒：三段式行程卡，取代舊的分數推薦 + 獨立雨勢提醒卡
+<!-- 🛵 今天怎麼安排：三段式行程卡，取代舊的分數推薦 + 獨立雨勢提醒卡
      ① AI 行程建議（自然語言）② 地點排序（透明度用，分數不隱藏）③ 注意時段
      過 21:00 後自動切換成「明天」視角（見 updateAiReport 的 showTomorrow） -->
 <div class="ai-report" id="aiReport">
-  <div class="ai-report-title">🛵 出門去哪兒</div>
+  <div class="ai-report-title">🛵 今天怎麼安排</div>
 
   <div class="itinerary-text" id="itineraryText">載入中…</div>
 
@@ -1098,15 +1098,37 @@ function locationRiskNote(label, buckets) {
 // ═══════════════════════════════════════════════════════════════
 // Phase 2：Life Context Layer — 換語言層，不碰 Weather Decision Engine
 // 分數／排序／時段偵測（②③與底層 buckets）完全不動，只有①的敘述
-// 依「今天是暑假還是上課」換句子。同一份天氣事實，兩種生活翻譯。
+// 依「今天要不要上課」換句子。同一份天氣事實，兩種生活翻譯。
 //
-// 2026 暫定學期規則：之後每年開學前手動更新這個日期常數即可，
-// 不需要外部行事曆 API（維護成本 vs 即時性的取捨，先求可用）
+// 舊版只有一個絕對日期常數（SCHOOL_START_2026 = 2026/8/31），有三個問題：
+//   1. 週末（一年約 100 天）照樣講「接送時段」，但六日根本沒有接送
+//   2. 寒假完全沒處理
+//   3. 過了 2026/8/31 就永遠是上課模式，連下一個暑假也失效
+// 改成「週末 + 寒暑假月日區間」：用月/日而不是絕對日期，每年自動重複，
+// 不用每年手動改常數
 // ═══════════════════════════════════════════════════════════════
-const SCHOOL_START_2026 = new Date(2026, 7, 31); // 8/31 開學
+
+// 寒假會跟著農曆年浮動幾天，這裡取概略區間就好——差幾天的代價只是那幾天
+// 多看到（或少看到）接送提醒，天氣判斷本身完全不受影響
+const VACATION_RANGES = [
+  { name: '暑假', from: [7, 1],  to: [8, 30] },
+  { name: '寒假', from: [1, 20], to: [2, 10] },
+];
+
+function isVacationDay(now) {
+  const dow = now.getDay();
+  if (dow === 0 || dow === 6) return true; // 六日沒有接送
+  const md = (now.getMonth() + 1) * 100 + now.getDate();
+  return VACATION_RANGES.some(r => {
+    const from = r.from[0] * 100 + r.from[1];
+    const to = r.to[0] * 100 + r.to[1];
+    // from > to 代表跨年度區間（例如 12/20~1/5），兩段都要算進去
+    return from <= to ? (md >= from && md <= to) : (md >= from || md <= to);
+  });
+}
 
 function getLifeContextMode(now) {
-  return now < SCHOOL_START_2026 ? 'summer' : 'school';
+  return isVacationDay(now) ? 'holiday' : 'school';
 }
 
 // 上課模式只關心「接送時段」（下午）會不會下雨，不是整天行程規劃——
@@ -1289,7 +1311,7 @@ function renderItineraryText(buckets, now, showTomorrow, dayWord) {
     return;
   }
 
-  // 暑假模式：沿用整天逐時段的行程敘述（親子活動安排取向）
+  // 放假模式（六日／寒暑假）：整天逐時段的行程敘述（親子活動安排取向）
   const allSafe = buckets.length > 1 && buckets.every(b => b.summary.risky.length === 0);
   if (allSafe) {
     const allEntries = buckets.flatMap(b => b.summary.safe);
