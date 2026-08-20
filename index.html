@@ -1834,8 +1834,13 @@ function renderDebugWeatherPanel() {
   if (lastShortRainError) {
     lines.push(`⚠ 抓取/解析失敗，原因: ${lastShortRainError}`);
   }
-  const srfCount = Object.values(cachedShortRainLayer).filter(v => v !== null && v !== undefined).length;
-  lines.push(`共 ${srfCount}/${Object.keys(FALLBACK_TOWN_COORDS).length} 個方向取到有效值（抓不到 content 字串或格點越界時全部會是「無資料」）`);
+  // -99 現在會原樣保留（不再被收斂成 null），所以「有雨的方向數」要另外排除
+  // -99，否則七地全部沒雨時會誤報成「7/7 取到有效值」，跟下面逐地顯示的
+  // 「沒雨」自相矛盾
+  const total = Object.keys(FALLBACK_TOWN_COORDS).length;
+  const srfRain = Object.values(cachedShortRainLayer).filter(v => typeof v === 'number' && v !== -99).length;
+  const srfBroken = Object.values(cachedShortRainLayer).filter(v => v === null || v === undefined).length;
+  lines.push(`共 ${srfRain}/${total} 個方向有降雨預報值；${srfBroken} 個方向資料異常（抓不到 content 字串或格點越界），其餘為 -99（官方無效值＝無回波，等同沒雨）`);
   if (cachedShortRainDebug) {
     const expectedTotal = FB0046_GRID.latCount * FB0046_GRID.lonCount;
     const lenOk = cachedShortRainDebug.totalValues === expectedTotal;
@@ -2072,8 +2077,7 @@ function searchNearbyValid(values, lat, lon, range) {
 // 無效值 -99（海洋/無回波區域），跟其他資料源的無效值處理方式一致。
 // 同時把「總共解析出幾個值」跟「每個方向拿到的原始值（不遮蔽 -99）」存進
 // cachedShortRainDebug，讓 debug 面板能分辨：是陣列長度就不對（split 有
-// 問題）、還是格點索引真的都落在 -99，兩者現在的正式顯示（都是「無資料」）
-// 看起來一樣，但診斷面板不該遮蔽這個差異
+// 問題）、還是格點索引真的都落在 -99（沒雨）
 let cachedShortRainDebug = null;
 
 // townCoords: { label: {lat, lon, source} }，預設用 resolveTownCoords()
