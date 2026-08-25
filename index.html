@@ -115,7 +115,10 @@
   .srf-note{font-size:.72rem;color:var(--muted);margin-bottom:10px;line-height:1.5}
   .srf-row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;font-size:.82rem}
   .srf-loc{font-weight:700;color:var(--text);font-family:'JetBrains Mono',monospace}
-  .srf-mm{color:var(--muted);font-family:'JetBrains Mono',monospace}
+  .srf-mm{color:var(--muted);font-family:'JetBrains Mono',monospace;text-align:right}
+  /* 「附近有雨」比「沒雨」長很多，要能換行又不擠掉地名 */
+  .srf-mm.is-nearby{color:var(--accent);font-weight:700}
+  .srf-mm.is-rain{color:var(--red);font-weight:700}
 </style>
 </head>
 <body>
@@ -1891,13 +1894,12 @@ function renderDebugWeatherPanel() {
   if (lastShortRainError) {
     lines.push(`⚠ 抓取/解析失敗，原因: ${lastShortRainError}`);
   }
-  // -99 現在會原樣保留（不再被收斂成 null），所以「有雨的方向數」要另外排除
-  // -99，否則七地全部沒雨時會誤報成「7/7 取到有效值」，跟下面逐地顯示的
-  // 「沒雨」自相矛盾
+  // 四種狀態分開數，不要把「沒雨」算進「有效值」——七地全部沒雨時報成
+  // 「7/7 取到有效值」會跟下面逐地顯示的「沒雨」自相矛盾
   const total = Object.keys(FALLBACK_TOWN_COORDS).length;
-  const srfRain = Object.values(cachedShortRainLayer).filter(v => typeof v === 'number' && v !== -99).length;
-  const srfBroken = Object.values(cachedShortRainLayer).filter(v => v === null || v === undefined).length;
-  lines.push(`共 ${srfRain}/${total} 個方向有降雨預報值；${srfBroken} 個方向資料異常（抓不到 content 字串或格點越界），其餘為 -99（官方無效值＝無回波，等同沒雨）`);
+  const cells = Object.values(cachedShortRainLayer);
+  const countBy = (s) => cells.filter(c => c?.status === s).length;
+  lines.push(`共 ${total} 個方向：${countBy('rain')} 個這一格就有雨、${countBy('nearby')} 個這格沒雨但±3格內有、${countBy('dry')} 個整片都沒雨、${countBy('broken')} 個資料異常（抓不到 content 字串或格點越界）`);
   if (cachedShortRainDebug) {
     const expectedTotal = FB0046_GRID.latCount * FB0046_GRID.lonCount;
     const lenOk = cachedShortRainDebug.totalValues === expectedTotal;
@@ -1910,12 +1912,11 @@ function renderDebugWeatherPanel() {
     const debugEntry = cachedShortRainDebug?.perTown?.[label];
     const coord = debugEntry?.coord || resolveTownCoords()[label];
     const idx = gridIndexForCoord(coord.lat, coord.lon);
-    const mm = cachedShortRainLayer[label];
+    const cell = cachedShortRainLayer[label];
     // raw 是「-99 沒有被遮蔽成無資料」的真實解析值，用來分辨「真的是 -99
     // 無回波」還是「根本沒解析到東西（undefined/NaN）」
     const rawStr = debugEntry ? `（原始值=${debugEntry.raw === undefined ? '陣列裡沒這個索引' : Number.isNaN(debugEntry.raw) ? 'NaN（split/parseFloat 失敗）' : debugEntry.raw}）` : '';
-    const mmDisplay = mm === null || mm === undefined ? '資料異常' : mm === -99 ? '沒雨' : mm.toFixed(1) + 'mm';
-    lines.push(`── ${label}（lat=${coord.lat}, lon=${coord.lon}, 座標來源=${coord.source || '?'}）→ 格點索引=${idx ?? '越界'} → ${mmDisplay} ${rawStr}`);
+    lines.push(`── ${label}（lat=${coord.lat}, lon=${coord.lon}, 座標來源=${coord.source || '?'}）→ 格點索引=${idx ?? '越界'} → [${cell?.status ?? '無'}] ${shortRainCellText(cell)} ${rawStr}`);
     if (debugEntry?.nearby) {
       const n = debugEntry.nearby;
       lines.push(`    ±3格鄰近搜尋: 偏移(緯度${n.dRow >= 0 ? '+' : ''}${n.dRow}格, 經度${n.dCol >= 0 ? '+' : ''}${n.dCol}格) 值=${n.v}mm`);
@@ -2136,6 +2137,45 @@ function searchNearbyValid(values, lat, lon, range) {
 // 問題）、還是格點索引真的都落在 -99（沒雨）
 let cachedShortRainDebug = null;
 
+// 格點解析度 0.0125°，在北緯 23.5 度附近約等於緯度 1.39 公里、經度 1.28 公里。
+// 用來把「偏移幾格」換算成使用者看得懂的公里數——「2格外」沒有意義，
+// 「約2.6公里外」才能拿來判斷要不要現在出門
+const FB0046_CELL_KM = { lat: 1.39, lon: 1.28 };
+
+function nearbyDistanceKm(nearby) {
+  const dy = nearby.dRow * FB0046_CELL_KM.lat;
+  const dx = nearby.dCol * FB0046_CELL_KM.lon;
+  return Math.sqrt(dy * dy + dx * dx);
+}
+
+// 把「這一格的原始值」跟「±3格鄰近搜尋結果」收斂成四種狀態。
+//
+// 這裡是本次修掉的 bug 所在：searchNearbyValid 一直有算，但結果只進了
+// debug 面板，畫面永遠只看代表座標那一格，所以旁邊 1~2 公里正在下雨時
+// 卡片還是顯示「沒雨」（使用者 8/22 截圖：雨量站六地全在下雨，這張卡
+// 六地全寫沒雨）。鄉鎮代表座標是行政中心，跟真正下雨的位置本來就不是
+// 同一點，對流雨範圍又小，差個 1~2 格是常態——所以「這格沒雨但附近有」
+// 必須是一種可以顯示的狀態，不能跟「整片都沒有」混為一談
+//
+// nearby 的搜尋範圍含 dist=0（自己這格），所以 v 不是 -99 時 nearby 必定
+// 是自己、dist=0；反過來 v===-99 時 nearby 只可能是 dist>0 的鄰居
+function classifyShortRain(v, nearby) {
+  // 先判資料異常：代表座標算出來的索引越界、或 split/Number 失敗。
+  // 即使鄰居有值也照樣報異常——那代表格點換算本身有問題，這件事比
+  // 「附近有沒有雨」更需要被看見，不能用鄰居的值把它蓋過去
+  if (v === undefined || Number.isNaN(v)) {
+    return { status: 'broken', mm: null, raw: v, nearbyMm: null, nearbyKm: null };
+  }
+  // -99 是官方定義的無效值（無回波）＝這一格沒雨，不是抓取失敗
+  if (v !== -99) {
+    return { status: 'rain', mm: v, raw: v, nearbyMm: null, nearbyKm: null };
+  }
+  if (nearby && nearby.dist > 0) {
+    return { status: 'nearby', mm: null, raw: v, nearbyMm: nearby.v, nearbyKm: nearbyDistanceKm(nearby) };
+  }
+  return { status: 'dry', mm: null, raw: v, nearbyMm: null, nearbyKm: null };
+}
+
 // townCoords: { label: {lat, lon, source} }，預設用 resolveTownCoords()
 // （官方座標優先、備援其次），測試時可以傳自己的座標表進來
 function buildShortRainLayer(contentStr, townCoords) {
@@ -2150,11 +2190,7 @@ function buildShortRainLayer(contentStr, townCoords) {
     const v = idx !== null ? values[idx] : undefined;
     const nearby = searchNearbyValid(values, coord.lat, coord.lon, 3);
     perTown[label] = { idx, raw: v, coord, nearby };
-    // -99 是官方明確定義的「無效值」（無回波），不是「抓取/解析失敗」——
-    // 這裡刻意不把兩者都收斂成 null，讓 renderShortRainCard 能分開顯示
-    // 「沒雨」跟「資料異常」，不要像之前的雨量站 bug 一樣把兩種意義不同
-    // 的情況顯示成同一句話
-    result[label] = (v === undefined || Number.isNaN(v)) ? null : v;
+    result[label] = classifyShortRain(v, nearby);
   }
   cachedShortRainDebug = { totalValues: values.length, perTown };
   return result;
@@ -2167,13 +2203,25 @@ let lastShortRainError = null;
 
 // 收合狀態下也要能一眼判斷要不要點開，跟現況確認同一套邏輯：有降雨就
 // 提示點開看看（細節要點開才看得到），全部沒雨就直接講「目前無降雨預報」，
-// 混雜「資料異常」（null）時不特別下結論，避免用不完整資料裝作有結論
+// 混雜「資料異常」時不特別下結論，避免用不完整資料裝作有結論。
+// 「附近有雨」自成一級——它確實值得點開看，但語氣要比「這裡正在下」弱
 function shortRainSummaryBadge() {
-  const values = Object.values(cachedShortRainLayer);
-  if (!values.length) return null;
-  if (values.some(v => typeof v === 'number' && v !== -99)) return { text: '有降雨，點開看看', cls: 'alert' };
-  if (values.every(v => v === -99)) return { text: '目前無降雨預報', cls: 'calm' };
+  const cells = Object.values(cachedShortRainLayer);
+  if (!cells.length) return null;
+  if (cells.some(c => c.status === 'rain')) return { text: '有降雨，點開看看', cls: 'alert' };
+  if (cells.some(c => c.status === 'nearby')) return { text: '附近有雨，點開看看', cls: 'alert' };
+  if (cells.every(c => c.status === 'dry')) return { text: '目前無降雨預報', cls: 'calm' };
   return null;
+}
+
+// 四種狀態的顯示文字。「沒雨」跟「資料異常」分開講（沒雨是結論，異常是
+// 系統壞了）；「附近有雨」要附上距離，使用者才有辦法自己判斷 2 公里外的
+// 雨關不關他的事
+function shortRainCellText(cell) {
+  if (!cell || cell.status === 'broken') return '資料異常';
+  if (cell.status === 'rain') return `${cell.mm.toFixed(1)} mm`;
+  if (cell.status === 'nearby') return `附近有雨 ${cell.nearbyMm.toFixed(1)} mm（約${cell.nearbyKm.toFixed(1)}公里外）`;
+  return '沒雨';
 }
 
 // 只顯示原始預估值，不做任何門檻判斷或文案——規則設計是下一步，這裡
@@ -2185,14 +2233,13 @@ function renderShortRainCard() {
   if (!entries.length) {
     card.innerHTML = '<div style="font-size:.8rem;color:var(--muted)">資料未取得</div>';
   } else {
-    // -99（官方無效值＝無回波）跟 null（抓取/解析失敗）分開顯示，不要
-    // 都寫成同一句「無資料」——沒雨跟資料異常是不同狀態，混在一起講
-    // 使用者會誤以為系統壞了，或反過來以為壞掉的資料是「真的沒下雨」
-    const rows = entries.map(([label, mm]) => {
-      const text = mm === null ? '資料異常' : mm === -99 ? '沒雨' : mm.toFixed(1) + ' mm';
-      return `<div class="srf-row"><span class="srf-loc">${label}</span><span class="srf-mm">${text}</span></div>`;
+    // 四種狀態各自顯示，不要混成同一句「無資料」——沒雨是結論、資料異常
+    // 是系統壞了、附近有雨是「這裡沒下但別高興太早」，三件事意義完全不同
+    const rows = entries.map(([label, cell]) => {
+      const cls = cell?.status === 'rain' ? ' is-rain' : cell?.status === 'nearby' ? ' is-nearby' : '';
+      return `<div class="srf-row"><span class="srf-loc">${label}</span><span class="srf-mm${cls}">${shortRainCellText(cell)}</span></div>`;
     }).join('');
-    card.innerHTML = `<div class="srf-note">未來1小時 QPESUMS 定量降雨預報格點值，門檻與文案規則尚未定案，先看原始數字</div>${rows}`;
+    card.innerHTML = `<div class="srf-note">未來1小時雷達定量降雨預報。鄉鎮座標取的是行政中心，對流雨範圍小，所以這一格沒雨時會再往外找 ±3 格（約4公里內），有找到就標成「附近有雨」</div>${rows}`;
   }
 
   const badgeEl = document.getElementById('srfSummaryBadge');
