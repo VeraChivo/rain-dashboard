@@ -1659,25 +1659,37 @@ function computeRiskPeriods(now) {
 
 // 單一格：只講「幾點左右」，不硬寫結束時間
 // 連續多格：合併成「起～迄」區間，並附上下一格（若有資料）何時趨緩
-function periodAlertText(period) {
+//
+// now 用來判斷這個時段是不是已經開始了。時段還沒到 →「幾點前回來」是
+// 有用的行動；時段已經開始 → 同一句話就變成叫人在已經過去的時間前完成
+// 行程（14:30 顯示「建議在12:00前完成」），不但沒有幫助，還會讓人以為
+// 資料是舊的。已經進行中的時段要改講「現在就在裡面」跟何時趨緩
+function periodAlertText(period, now = new Date()) {
   // 跟②地點排序同一種收斂：這個時段全部七個方向都受影響時要收成「全區域」，
   // 不要逐一列出七個地名（formatAreaList 跟其他地方用同一套規則）
   const names = formatAreaList(period.risky, Object.keys(DIRECTION_TOWNS));
   const kind = riskKindLabel(period.worstLevel);
   const firstLabel = `${pad(period.firstSlot.getHours())}:00`;
+  const recoverLabel = period.nextSlotTime ? `${pad(period.nextSlotTime.getHours())}:00` : null;
+  const started = period.firstSlot <= now;
+
+  // 已經進行中：不再給「幾點前完成」的死線，改成指向現況確認
+  const startedAdvice = recoverLabel
+    ? `目前已在風險時段內，${recoverLabel}後趨緩`
+    : '目前已在風險時段內，外出前先確認現況';
 
   if (period.isSingle) {
     return {
       timeLabel: `${firstLabel}左右`,
       text: `${names} 可能出現${kind}`,
-      advice: `建議${firstLabel}前完成戶外行程`,
+      advice: started ? startedAdvice : `建議${firstLabel}前完成戶外行程`,
     };
   }
 
   const lastLabel = `${pad(period.lastSlot.getHours())}:00`;
-  const recoverLabel = period.nextSlotTime ? `${pad(period.nextSlotTime.getHours())}:00` : null;
-  const advice = `戶外活動建議在${firstLabel}前完成`
-    + (recoverLabel ? `，${recoverLabel}後趨緩，可再視天氣調整` : '');
+  const advice = started
+    ? startedAdvice
+    : `戶外活動建議在${firstLabel}前完成` + (recoverLabel ? `，${recoverLabel}後趨緩，可再視天氣調整` : '');
 
   return { timeLabel: `${firstLabel}～${lastLabel}`, text: `${names} ${kind}機率增加`, advice };
 }
@@ -1700,7 +1712,7 @@ function renderAlertList(now, dayWord) {
   }
 
   listEl.innerHTML = periods.map(p => {
-    const { timeLabel, text, advice } = periodAlertText(p);
+    const { timeLabel, text, advice } = periodAlertText(p, now);
     return `<div class="alert-row">
       <div class="alert-time">${timeLabel}</div>
       <div class="alert-text">${text}</div>

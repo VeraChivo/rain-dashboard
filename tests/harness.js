@@ -20,6 +20,22 @@ const INDEX_PATH = path.join(__dirname, '..', 'index.html');
 // updateAiReport 的測試都要帶上這組。
 const AI_REPORT_IDS = ['itineraryText', 'rankList', 'alertList', 'rankSectionTitle', 'alertSectionTitle'];
 
+// setLoading()／setStatus()／updateDateBadge() 是 fetchAll 的第一件事，而且
+// 都沒有擋 null，所以這三個一定要給假元素——否則 fetchAll 會在還沒進到
+// try 之前就丟例外。
+//
+// 這件事之前是被蓋住的：fetchAll 是 async，它丟出來的是 rejected promise，
+// 而測試檔跑完會馬上 process.exit()，在 Node 處理 unhandled rejection 之前
+// 就結束了。所以測試全綠，實際上初始化整段是壞的。下面的 unhandledRejection
+// 攔截就是為了不要再被蓋住一次
+const SHELL_IDS = ['refreshBtn', 'statusMsg', 'dateBadge'];
+
+process.on('unhandledRejection', (err) => {
+  console.error('\nFAIL 載入 index.html 時有未處理的 rejection（初始化路徑壞了，不是你的斷言）:');
+  console.error(err && err.stack ? err.stack : err);
+  process.exit(1);
+});
+
 function makeEl() {
   return { innerHTML: '', textContent: '', title: '', className: '', value: '', classList: { add() {}, remove() {}, toggle() {} } };
 }
@@ -30,7 +46,7 @@ function loadApp({ stubIds = [], storage = false } = {}) {
   const html = fs.readFileSync(INDEX_PATH, 'utf8');
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 
-  const allowed = new Set(stubIds);
+  const allowed = new Set([...SHELL_IDS, ...stubIds]);
   const elements = {};
   const document = {
     getElementById: (id) => {

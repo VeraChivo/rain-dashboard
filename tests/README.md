@@ -22,6 +22,8 @@ node tests/test_shortrain.js   # 只跑單一檔案
 | `test_rainstation.js` | O-A0002-001 雨量站選站、無效值、現況狀態推導 |
 | `test_ranklist.js` | ②地點排序的體感優先規則、不顯示分數 |
 | `test_shortrain.js` | F-B0046-001 四態分類、±3 格鄰近搜尋、收合徽章 |
+| `test_alert.js` | W-C0033-001 警特報兩階段嚴重度、不重複講同一句 |
+| `test_period.js` | ③日間注意的時段合併與文案（含已開始時段的處理）|
 
 ## 寫新測試時最容易踩的坑
 
@@ -38,6 +40,14 @@ node tests/test_shortrain.js   # 只跑單一檔案
 `stubIds` 都要帶上 `AI_REPORT_IDS`。
 
 需要 `localStorage` 的測試要傳 `storage: true`（Node 沒有這個全域）。
+
+`harness.js` 預設會補上 `refreshBtn`／`statusMsg`／`dateBadge`（`SHELL_IDS`），
+因為 `fetchAll()` 一開頭就會碰這三個而且沒擋 null。
+
+**這件事曾經被蓋住過**：`fetchAll` 是 async，它丟出來的是 rejected promise，
+而測試檔跑完馬上 `process.exit()`，在 Node 處理 unhandled rejection 之前就
+結束了——所以測試全綠，實際上初始化整段是壞的。現在 `harness.js` 裝了
+`unhandledRejection` 攔截，這種情況會直接讓測試失敗。
 
 ## 歷史說明：曾經遺失過一批測試
 
