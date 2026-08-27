@@ -898,13 +898,17 @@ function uvSuffix(uvInfo) {
 // 閱讀吃力的主因，不管是雨勢還是熱傷害，只要是「一組方向」的清單都用這個
 // 地名用空格隔開、不用「、」，每個地名加粗——比較兩種寫法長短時用純文字
 // 長度比，不能把 <strong> 標籤算進去，否則會因為地名數量不同而比歪
-function formatAreaList(hitLabels, allLabels) {
+// allowExcept：②地點排序要傳 false。那張卡是逐列把所有地點分完的，被排除
+// 的地點一定就寫在下一列，所以「全區域除了民雄 斗南」後面緊接著一列
+// 「斗南 民雄」，等於用繞路的方式講同一件事（使用者 8/27 截圖）。
+// 這裡的長度比較只看字數不看好不好懂，兩種寫法常常只差一兩個字就翻轉
+function formatAreaList(hitLabels, allLabels, { allowExcept = true } = {}) {
   const hitSet = new Set(hitLabels);
   if (hitSet.size >= allLabels.length) return '全區域';
   const excluded = allLabels.filter(l => !hitSet.has(l));
   const listedPlain = hitLabels.join(' ');
   const exceptPlain = `全區域除了${excluded.join(' ')}`;
-  if (exceptPlain.length < listedPlain.length) {
+  if (allowExcept && exceptPlain.length < listedPlain.length) {
     return `全區域除了${excluded.map(l => `<strong>${l}</strong>`).join(' ')}`;
   }
   return hitLabels.map(l => `<strong>${l}</strong>`).join(' ');
@@ -1261,7 +1265,13 @@ function getCountyAlert(countyName) {
   return hazards && hazards.length ? hazards[0] : null;
 }
 
-function officialAlertClause(labels) {
+// suppressGaugeConfirm：①已經有一句 cctvConfirmationClause（「目前雨量站顯示
+// X 已在降雨，建議延後外出。」）在顯示時傳 true。兩句話原本各自獨立產生，
+// 撞在一起時會出現一模一樣的雨量站確認講兩遍（使用者 8/27 截圖：同一張卡
+// 裡「雨量站顯示 新港 已在降雨，建議延後外出」出現兩次）。
+// 只拿掉重複的那半句，⚠️／ℹ️ 的嚴重度判斷照舊——那是靠現況確認決定的，
+// 不能因為不顯示就跟著弱化
+function officialAlertClause(labels, { suppressGaugeConfirm = false } = {}) {
   const counties = [...new Set(labels.map(l => ALERT_COUNTY_NAME[DIRECTION_TOWNS[l]?.dataset]).filter(Boolean))];
   for (const county of counties) {
     const alert = getCountyAlert(county);
@@ -1274,6 +1284,7 @@ function officialAlertClause(labels) {
     const alertText = `${alert.info?.phenomena || alert.phenomena || ''}${alert.info?.significance || alert.significance || ''}`;
 
     if (confirmedLabel) {
+      if (suppressGaugeConfirm) return `⚠️ <strong>${county}</strong> 目前有${alertText}`;
       const stateText = cctvStates[confirmedLabel] === 'raining' ? '已在降雨' : '近期已有降雨';
       return `⚠️ <strong>${county}</strong> 目前有${alertText}<br>雨量站顯示 <strong>${confirmedLabel}</strong> ${stateText}，建議延後外出`;
     }
@@ -1360,7 +1371,9 @@ function renderItineraryText(buckets, now, showTomorrow, dayWord) {
 
   // 官方警特報（W-C0033）：只在看「今天」時才有意義，跟 CCTV 同一種限制——
   // 已經切到明天視角時，現在生效中的特報不能拿來確認明天
-  const officialNote = !showTomorrow ? officialAlertClause(Object.keys(DIRECTION_TOWNS)) : null;
+  const officialNote = !showTomorrow
+    ? officialAlertClause(Object.keys(DIRECTION_TOWNS), { suppressGaugeConfirm: !!cctvNote })
+    : null;
 
   if (mode === 'school') {
     let text = schoolModeClause(buckets, dayWord);
@@ -1528,6 +1541,19 @@ function renderRankList(wlAdvice, buckets, dayWordFormal) {
     return b.score - a.score;
   });
 
+  // 同一句風險備註出現在多個組時（例如兩組都是「下午需留意雷陣雨」），
+  // 畫面上兩列文字會一模一樣、名次卻不同——分數拿掉之後，名次就變成沒有
+  // 任何可見理由的斷言，看起來像 bug（使用者 8/27 截圖就是這個情況）。
+  // 這裡替排在後面的組補一句相對嚴重度，讓排序自己解釋自己。
+  // 15 分沿用 buildWeatherLayerAdvice 既有的「明顯較佳」門檻，不另外發明一條線
+  const firstWithNote = {};
+  for (const g of groups) {
+    if (g.tier !== 'risk' || !g.note) continue;
+    if (!(g.note in firstWithNote)) { firstWithNote[g.note] = g; continue; }
+    const gap = firstWithNote[g.note].score - g.score;
+    if (gap > 0) g.noteSuffix = gap >= 15 ? '（風險明顯較高）' : '（風險略高）';
+  }
+
   // 全部地點合併成同一組（同層、同分、同體感、同曝曬）時，七個地名逐一條列
   // 沒有決策價值——沒有差異就不用假裝有選擇，直接說「各地皆宜」比較誠實
   const allMerged = groups.length === 1 && unscored.length === 0 && groups[0].tier === 'low-risk';
@@ -1542,13 +1568,15 @@ function renderRankList(wlAdvice, buckets, dayWordFormal) {
     </div>`];
   })() : groups.map((g, i) => {
     const medal = RANK_MEDALS[i] || `${i + 1}`;
-    const status = g.note || comfortStatusText(g.thermalLevel, g.exposureLevel, dayWordFormal);
+    const status = g.note
+      ? g.note + (g.noteSuffix || '')
+      : comfortStatusText(g.thermalLevel, g.exposureLevel, dayWordFormal);
     const statusHtml = status ? `<div class="rank-status">${status}</div>` : '';
     // allMerged 只處理「全部同一組、且是 low-risk」的情況；一組裡剛好塞進
     // 全部七個地名但 tier 是 risk（同分同風險備註）時 allMerged 不會觸發，
     // 用 formatAreaList 收斂成「全區域」，不要逐一列出七個地名
     return `<div class="rank-row">
-      <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${formatAreaList(g.labels, Object.keys(DIRECTION_TOWNS))}</span></div>
+      <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${formatAreaList(g.labels, Object.keys(DIRECTION_TOWNS), { allowExcept: false })}</span></div>
       ${statusHtml}
     </div>`;
   });
@@ -1556,7 +1584,7 @@ function renderRankList(wlAdvice, buckets, dayWordFormal) {
   if (unscored.length) {
     const medal = RANK_MEDALS[groups.length] || `${groups.length + 1}`;
     rows.push(`<div class="rank-row">
-      <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${formatAreaList(unscored.map(e => e.label), Object.keys(DIRECTION_TOWNS))}</span></div>
+      <div class="rank-head"><span class="rank-medal">${medal}</span><span class="rank-loc">${formatAreaList(unscored.map(e => e.label), Object.keys(DIRECTION_TOWNS), { allowExcept: false })}</span></div>
       <div class="rank-status">資料尚未就緒</div>
     </div>`);
   }
