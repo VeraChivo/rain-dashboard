@@ -24,6 +24,7 @@ node tests/test_shortrain.js   # 只跑單一檔案
 | `test_shortrain.js` | F-B0046-001 四態分類、±3 格鄰近搜尋、收合徽章 |
 | `test_alert.js` | W-C0033-001 警特報兩階段嚴重度、不重複講同一句 |
 | `test_period.js` | ③日間注意的時段合併與文案（含已開始時段的處理）|
+| `test_laundry.js` | 👕曬衣建議的窗口最壞情況、收衣時間、地點記憶 |
 
 ## 寫新測試時最容易踩的坑
 

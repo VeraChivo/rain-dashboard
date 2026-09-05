@@ -109,6 +109,25 @@
   .extras-group .srf-card{margin-bottom:0}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
   /* 短時雨勢預警（F-B0046-001）：Priority 2，只顯示原始 mm，還沒有正式門檻/文案 */
+  /* 曬衣卡放在主卡下面（不收進最下面的 extras-group）——曬不曬衣服是
+     每天都要做、而且會被天氣改變的決定，符合「會改變今天安排才進主畫面」 */
+  .laundry-card{background:linear-gradient(135deg,rgba(47,111,237,.06),rgba(16,185,129,.07));border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin-bottom:20px}
+  .laundry-title{font-size:.86rem;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace;letter-spacing:.05em;cursor:pointer}
+  .laundry-body{margin-top:10px}
+  .laundry-town-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:.76rem;color:var(--muted);margin-bottom:10px}
+  .laundry-town-row select{font:inherit;font-weight:700;color:var(--text);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:3px 8px}
+  .laundry-town-hint{font-size:.7rem}
+  .laundry-headline{font-size:.95rem;font-weight:700;text-align:center;margin-bottom:6px}
+  .laundry-headline.good{color:var(--green)}
+  .laundry-headline.caution,.laundry-headline.later{color:#ca8a04}
+  .laundry-headline.bad{color:var(--red)}
+  .laundry-reason{font-size:.76rem;color:var(--muted);text-align:center;margin-bottom:3px}
+  .laundry-slots{margin-top:10px;padding-top:8px;border-top:1px solid var(--border)}
+  .laundry-slot{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:.76rem;margin-bottom:5px;font-family:'JetBrains Mono',monospace}
+  .laundry-slot-time{font-weight:700;color:var(--text);min-width:48px}
+  .laundry-slot-desc{color:var(--muted);flex:1;text-align:right}
+  .laundry-slot.is-bad .laundry-slot-time{color:var(--red)}
+  .laundry-slot.is-bad .laundry-slot-desc{color:var(--red)}
   .srf-card{background:linear-gradient(135deg,rgba(124,92,252,.06),rgba(47,111,237,.06));border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:20px}
   .srf-title{font-size:.82rem;font-weight:700;color:var(--accent2);margin-bottom:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;cursor:pointer}
   .srf-body{margin-top:8px}
@@ -160,6 +179,23 @@
     <div id="alertList"></div>
   </div>
 </div>
+
+<!-- 👕 曬衣建議：跟①②③問的是不同的問題。
+     出門是「某個時間點能不能出去」，曬衣服是「從現在到收衣服為止的
+     整段時間會不會下雨」——窗口內只要有任何一格有雨衣服就濕了，所以
+     這裡看的是整段的最壞情況，不是平均值或代表值。
+     收合狀態的徽章就直接給結論，不用點開也知道能不能曬 -->
+<details class="laundry-card">
+  <summary class="laundry-title">👕 曬衣服<span id="laundrySummaryBadge" class="cctv-summary-badge"></span></summary>
+  <div class="laundry-body">
+    <div class="laundry-town-row">
+      曬在
+      <select id="laundryTownSelect" onchange="setLaundryTown(this.value)"></select>
+      <span class="laundry-town-hint">（衣服曬在家裡，只看這一地）</span>
+    </div>
+    <div id="laundryDetail"><span style="color:var(--muted)">載入中…</span></div>
+  </div>
+</details>
 
 <!-- 六地對照（24小時）：放在最前面，打開就先看到主表格 -->
 <div class="section-title">🗺 六地對照｜今明兩日預報</div>
@@ -1721,6 +1757,174 @@ function renderAlertList(now, dayWord) {
   }).join('');
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 👕 曬衣建議 Layer
+//
+// 跟①②③是不同性質的問題。出門問的是「某個時間點能不能出去」，可以
+// 挑時段閃過雨；曬衣服問的是「從現在到收衣服為止的整段時間」，窗口內
+// 只要有任何一格下雨，衣服就濕了——所以這裡取的是整段的最壞情況，
+// 不是平均值，也不是代表時段。
+//
+// 而且曬衣服是在「家裡」，不是六個方向都曬，所以要指定一個地點。預設
+// 用生活圈權重最高的那個，使用者可以自己改（跟模式按鈕同一套 localStorage
+// 做法）。這裡刻意不做「六地取最壞」——那會讓 20 公里外的一場雷陣雨
+// 把自家院子的好天氣蓋掉，天天都說不能曬就等於沒有功能
+// ═══════════════════════════════════════════════════════════════
+const LAUNDRY_TOWN_KEY = 'rainDashboard.laundryTown';
+const LAUNDRY_START_HOUR = 6;  // 天亮前掛出去沒意義
+const LAUNDRY_END_HOUR = 18;   // 天黑後不會再乾，還會回潮
+
+// pop >= 40 就當成不能曬。40 不是新發明的門檻——它是對照表色階本來
+// 就有的第一條界線（見 getRainColor），沿用同一條線，不另外定義一套
+const LAUNDRY_POP_LIMIT = 40;
+
+// 濕度門檻：只用來講「乾得快/慢」，不影響能不能曬的結論（那是雨決定的）。
+// 台灣夏天 75~90% 是常態，所以區間刻意抓寬，避免天天都在講濕度
+const LAUNDRY_RH_HUMID = 85;
+const LAUNDRY_RH_DRY = 70;
+
+function laundryDefaultTown() {
+  return Object.keys(DIRECTION_WEIGHTS)
+    .reduce((a, b) => (DIRECTION_WEIGHTS[b] > DIRECTION_WEIGHTS[a] ? b : a));
+}
+
+let laundryTown = laundryDefaultTown();
+try {
+  const savedTown = localStorage.getItem(LAUNDRY_TOWN_KEY);
+  if (savedTown && DIRECTION_TOWNS[savedTown]) laundryTown = savedTown;
+} catch (e) { /* 無痕模式等存取不到就用預設 */ }
+
+function setLaundryTown(label) {
+  if (!DIRECTION_TOWNS[label]) return;
+  laundryTown = label;
+  try { localStorage.setItem(LAUNDRY_TOWN_KEY, label); } catch (e) { /* 存不到不影響本次操作 */ }
+  renderLaundryCard();
+}
+
+function isSameDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+// 今天還剩下的曬衣時段；今天已經曬不了了就改看明天，因為傍晚之後使用者
+// 真正要問的是「明天早上能不能曬」，回一句「今天不行」對他沒有用
+function laundryWindowSlots(label, now) {
+  const risk = cachedWeatherLayers[label]?.risk || [];
+  const inHours = (d) => d.getHours() >= LAUNDRY_START_HOUR && d.getHours() < LAUNDRY_END_HOUR;
+
+  const today = risk.filter(r => r.start && r.end && r.end > now && isSameDay(r.start, now) && inHours(r.start));
+  if (today.length) return { day: 'today', slots: today };
+
+  const tmr = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const tomorrow = risk.filter(r => r.start && isSameDay(r.start, tmr) && inHours(r.start));
+  return tomorrow.length ? { day: 'tomorrow', slots: tomorrow } : { day: null, slots: [] };
+}
+
+// RH 有被 parseRawWeatherElements 讀進來，但沒有進 risk timeline，
+// 所以這裡自己用時間對回原始欄位
+function laundryHumidity(label, slots) {
+  const times = cachedWeatherLayers[label]?.raw?.RH?.time || [];
+  const vals = [];
+  for (const s of slots) {
+    const hit = times.find(t => t.start?.getTime() === s.start?.getTime());
+    const v = hit ? parseInt(hit.raw?.RH, 10) : NaN;
+    if (!Number.isNaN(v)) vals.push(v);
+  }
+  if (!vals.length) return null;
+  return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+}
+
+function isBadForLaundry(slot) {
+  if (RISKY_SIGNAL_LEVELS.includes(slot.signalLevel)) return true;
+  return typeof slot.pop === 'number' && slot.pop >= LAUNDRY_POP_LIMIT;
+}
+
+function buildLaundryAdvice(label, now) {
+  const { day, slots } = laundryWindowSlots(label, now);
+  if (!day || !slots.length) return { status: 'nodata', label, day: null, slots: [] };
+
+  const firstBadIdx = slots.findIndex(isBadForLaundry);
+  const firstGoodIdx = slots.findIndex(s => !isBadForLaundry(s));
+  const dayWord = day === 'tomorrow' ? '明天' : '今天';
+  const hhmm = (d) => `${pad(d.getHours())}:00`;
+
+  let status, headline;
+  if (firstBadIdx === -1) {
+    status = 'good';
+    headline = `${dayWord}可以曬`;
+  } else if (firstGoodIdx === -1) {
+    status = 'bad';
+    headline = `${dayWord}不適合曬`;
+  } else if (firstBadIdx === 0) {
+    // 現在這格有雨，但後面會轉好——講「幾點後再曬」比講「不能曬」有用
+    status = 'later';
+    headline = `先別曬，${hhmm(slots[firstGoodIdx].start)} 後再看`;
+  } else {
+    status = 'caution';
+    headline = `可以曬，${hhmm(slots[firstBadIdx].start)} 前收`;
+  }
+
+  const humidity = laundryHumidity(label, slots);
+  const exposure = aggregateExposureLevel(slots);
+
+  // 乾得快不快只在「可以曬」的時候才有意義——已經說不能曬了還講濕度
+  // 是多餘的資訊
+  const reasons = [];
+  if (status !== 'bad') {
+    if (humidity !== null && humidity >= LAUNDRY_RH_HUMID) reasons.push(`濕度 ${humidity}%，不容易乾`);
+    else if (humidity !== null && humidity <= LAUNDRY_RH_DRY) reasons.push(`濕度 ${humidity}%，乾得快`);
+    if (exposure === 'sunny' || exposure === 'partlycloudy') reasons.push('日照充足');
+    else if (exposure === 'overcast') reasons.push('整天偏陰，乾得慢');
+  }
+  if (status === 'bad') reasons.push(`${dayWord}${LAUNDRY_START_HOUR}:00～${LAUNDRY_END_HOUR}:00 都有降雨機率`);
+
+  return { status, label, day, dayWord, slots, headline, reasons, humidity, exposure };
+}
+
+function laundrySummaryBadge(advice) {
+  if (!advice || advice.status === 'nodata') return null;
+  return { text: advice.headline, cls: advice.status === 'good' ? 'calm' : 'alert' };
+}
+
+function renderLaundryCard(now = new Date()) {
+  const selectEl = document.getElementById('laundryTownSelect');
+  if (selectEl) {
+    selectEl.innerHTML = Object.keys(DIRECTION_TOWNS)
+      .map(l => `<option value="${l}"${l === laundryTown ? ' selected' : ''}>${l}</option>`).join('');
+  }
+
+  const advice = buildLaundryAdvice(laundryTown, now);
+
+  const badgeEl = document.getElementById('laundrySummaryBadge');
+  if (badgeEl) {
+    const b = laundrySummaryBadge(advice);
+    badgeEl.textContent = b ? `（${b.text}）` : '';
+    badgeEl.className = 'cctv-summary-badge' + (b ? ' ' + b.cls : '');
+  }
+
+  const detailEl = document.getElementById('laundryDetail');
+  if (!detailEl) return;
+
+  if (advice.status === 'nodata') {
+    detailEl.innerHTML = '<div class="laundry-reason">預報資料尚未就緒，稍後再看</div>';
+    return;
+  }
+
+  // 逐格列出來，讓使用者自己看得到結論是怎麼來的——跟②③一樣，
+  // 不要只丟一句結論叫人相信
+  const rows = advice.slots.map(s => {
+    const bad = isBadForLaundry(s);
+    const popText = typeof s.pop === 'number' ? `${s.pop}%` : '—';
+    return `<div class="laundry-slot${bad ? ' is-bad' : ''}">
+      <span class="laundry-slot-time">${pad(s.start.getHours())}:00</span>
+      <span class="laundry-slot-desc">${s.text || ''}${s.text ? ' · ' : ''}降雨 ${popText}</span>
+    </div>`;
+  }).join('');
+
+  detailEl.innerHTML = `<div class="laundry-headline ${advice.status}">${advice.headline}</div>`
+    + advice.reasons.map(r => `<div class="laundry-reason">${r}</div>`).join('')
+    + `<div class="laundry-slots">${rows}</div>`;
+}
+
 // 對所有方向鄉鎮跑一次 P0～P1-2，結果暫存供 console 診斷用
 // 不接入 UI、不接入現有出門建議卡；fetchAll 每次刷新會靜默重算
 let cachedWeatherLayers = {};
@@ -2556,6 +2760,14 @@ async function fetchAll() {
       console.warn('[短時雨勢預警 layer]', e.message);
     }
 
+    // 曬衣建議吃的是 cachedWeatherLayers，所以要排在它重算之後；
+    // 跟其他非核心卡片一樣包起來，壞掉不能拖垮主流程
+    try {
+      renderLaundryCard();
+    } catch (e) {
+      console.warn('[曬衣建議]', e.message);
+    }
+
     const allData = {};
     for (const loc of LOCATIONS) {
       const locs = loc.county === 'F-D0047-029' ? chiayi : yunlin;
@@ -2577,6 +2789,7 @@ async function fetchAll() {
 
 renderCctvGrid();
 renderModeButton();
+renderLaundryCard();
 fetchAll();
 </script>
 </body>
