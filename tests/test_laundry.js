@@ -12,6 +12,7 @@ const {
   buildLaundryAdvice, laundryWindowSlots, isBadForLaundry, laundrySummaryBadge,
   renderLaundryCard, setLaundryTown, laundryDefaultTown, getLaundryTown,
   setWeatherLayers, LAUNDRY_TOWN_KEY, LAUNDRY_POP_LIMIT, DIRECTION_WEIGHTS,
+  laundryScopeTowns, LAUNDRY_NEARBY_KM, setCctvStates,
 } = evaluate(app, `
 exports.buildLaundryAdvice = buildLaundryAdvice;
 exports.laundryWindowSlots = laundryWindowSlots;
@@ -24,7 +25,10 @@ exports.getLaundryTown = () => laundryTown;
 exports.LAUNDRY_TOWN_KEY = LAUNDRY_TOWN_KEY;
 exports.LAUNDRY_POP_LIMIT = LAUNDRY_POP_LIMIT;
 exports.DIRECTION_WEIGHTS = DIRECTION_WEIGHTS;
+exports.laundryScopeTowns = laundryScopeTowns;
+exports.LAUNDRY_NEARBY_KM = LAUNDRY_NEARBY_KM;
 exports.setWeatherLayers = (v) => { cachedWeatherLayers = v; };
+exports.setCctvStates = (v) => { cctvStates = v; };
 `);
 
 const check = createChecker();
@@ -181,6 +185,79 @@ check(app.storage.getItem(LAUNDRY_TOWN_KEY) === '斗南', 'the chosen town is pe
 setLaundryTown('不存在的地方');
 check(getLaundryTown() === '斗南', 'an unknown town is rejected rather than breaking the card');
 setLaundryTown(HOME);
+
+// ── 鄰鎮下雨也算（使用者實測回報：新港預報沒事，民雄在暴雨）───────
+// 對流胞 5~20 公里大、時速 20~40 公里，民雄離新港 6.8 公里，那場雨
+// 半小時內就到自家院子。只看自己那一格會整個漏掉
+setCctvStates({});
+const scope = laundryScopeTowns('新港').map(t => t.label);
+check(scope[0] === '新港', 'the chosen town leads its own scope');
+check(scope.includes('民雄') && scope.includes('溪口') && scope.includes('北港'),
+  '新港 scope covers 溪口 4.3km / 民雄 6.8km / 北港 7.0km — close enough for a cell to drift over');
+check(!scope.includes('斗南'), '斗南 at 19.3km is outside the radius — a storm that far away must not veto a fine day at home');
+check(!scope.includes('朴子'), '朴子 at 15.3km is outside the radius too');
+check(LAUNDRY_NEARBY_KM === 15, 'the radius is 15km, sitting between 北港 7.0km and 朴子 15.3km');
+
+// 每個地點都要有鄰居可參考，包括最偏遠的斗南（最近的溪口 15.1km 剛好卡在半徑外）
+check(laundryScopeTowns('斗南').length >= 2, 'even the most isolated town gets its nearest neighbour — some reference beats none');
+check(laundryScopeTowns('斗南')[1].label === '溪口', '斗南 falls back to 溪口, its nearest at 15.1km');
+
+// 自家一片晴朗、民雄下午雷陣雨 → 還是要收
+function setPerTown(perTown, day = 27) {
+  const layers = {};
+  for (const [label, slots] of Object.entries(perTown)) {
+    layers[label] = {
+      risk: slots.map(s => ({
+        start: at(s.h, day), end: at(s.h + 3, day),
+        pop: s.pop, text: s.text || '多雲', signalLevel: s.signal || 'stable',
+      })),
+      raw: { RH: { time: slots.map(s => ({ start: at(s.h, day), raw: { RH: String(s.rh ?? 78) } })) } },
+    };
+  }
+  setWeatherLayers(layers);
+}
+const clear = [{ h: 6, pop: 10 }, { h: 9, pop: 10 }, { h: 12, pop: 10 }, { h: 15, pop: 10 }];
+const stormyPM = [{ h: 6, pop: 10 }, { h: 9, pop: 10 }, { h: 12, pop: 90, signal: 'thunder' }, { h: 15, pop: 90, signal: 'thunder' }];
+
+setPerTown({ 新港: clear, 溪口: clear, 民雄: stormyPM, 北港: clear, 朴子: clear, 斗南: clear });
+a = buildLaundryAdvice('新港', MORNING);
+check(a.status === 'caution', 'BUG FIX: 民雄 storming in the afternoon makes 新港 laundry a caution, even though 新港 own forecast is clear');
+check(a.headline === '可以曬，12:00 前收', 'BUG FIX: the neighbour sets the take-in time');
+check(a.reasons.some(r => r.includes('民雄') && r.includes('公里外')),
+  'BUG FIX: the card names the neighbour and its distance — otherwise a clear home forecast with a red row looks like a bug');
+check(a.reasons.some(r => r.includes('6.8公里外')), 'the real distance is shown, not a vague 附近');
+
+// 反過來：斗南（19.3km）暴雨不能否決新港的好天氣
+setPerTown({ 新港: clear, 溪口: clear, 民雄: clear, 北港: clear, 朴子: clear, 斗南: stormyPM });
+check(buildLaundryAdvice('新港', MORNING).status === 'good', 'a storm at 斗南 19.3km away does NOT veto hanging laundry at 新港');
+
+// 自家自己就有雨時，不用特別說是誰造成的——看時段表就知道
+setPerTown({ 新港: stormyPM, 溪口: clear, 民雄: clear, 北港: clear, 朴子: clear, 斗南: clear });
+a = buildLaundryAdvice('新港', MORNING);
+check(a.status === 'caution' && a.headline === '可以曬，12:00 前收', 'the home town own rain still drives the deadline');
+check(!a.reasons.some(r => r.includes('會飄過來')), 'when it is the home town own rain, no neighbour attribution is added');
+
+// ── 現況：隔壁正在下雨 ─────────────────────────────────────────
+// 衣服已經掛在外面了，這比任何預報都急
+setPerTown({ 新港: clear, 溪口: clear, 民雄: clear, 北港: clear, 朴子: clear, 斗南: clear });
+setCctvStates({ 民雄: 'raining' });
+a = buildLaundryAdvice('新港', MORNING);
+check(a.status === 'urgent', 'a neighbouring gauge actually raining right now -> urgent, overriding a clear forecast');
+check(a.headline === '民雄 正在下雨，先去收', 'urgent headline names the town that is raining');
+check(a.reasons[0].includes('雨量站') && a.reasons[0].includes('6.8公里外'), 'the live reason leads, and cites the gauge and distance');
+check(laundrySummaryBadge(a).cls === 'alert', 'urgent renders as an alert badge');
+
+setCctvStates({ 新港: 'raining' });
+check(buildLaundryAdvice('新港', MORNING).headline === '正在下雨，快去收', 'rain at home itself gets the most direct wording');
+
+// 只是「近期下過」不夠急，不要把 wet 當成正在下
+setCctvStates({ 民雄: 'wet' });
+check(buildLaundryAdvice('新港', MORNING).status === 'good', 'a merely wet (recently rained) gauge does not trigger the urgent state');
+
+// 太遠的地方正在下雨也不算
+setCctvStates({ 斗南: 'raining' });
+check(buildLaundryAdvice('新港', MORNING).status === 'good', 'a gauge raining 19.3km away is out of scope and does not raise an alarm');
+setCctvStates({});
 
 // ── 沒資料 ─────────────────────────────────────────────────────
 setWeatherLayers({});

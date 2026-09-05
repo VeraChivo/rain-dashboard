@@ -120,7 +120,7 @@
   .laundry-headline{font-size:.95rem;font-weight:700;text-align:center;margin-bottom:6px}
   .laundry-headline.good{color:var(--green)}
   .laundry-headline.caution,.laundry-headline.later{color:#ca8a04}
-  .laundry-headline.bad{color:var(--red)}
+  .laundry-headline.bad,.laundry-headline.urgent{color:var(--red)}
   .laundry-reason{font-size:.76rem;color:var(--muted);text-align:center;margin-bottom:3px}
   .laundry-slots{margin-top:10px;padding-top:8px;border-top:1px solid var(--border)}
   .laundry-slot{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:.76rem;margin-bottom:5px;font-family:'JetBrains Mono',monospace}
@@ -191,7 +191,7 @@
     <div class="laundry-town-row">
       曬在
       <select id="laundryTownSelect" onchange="setLaundryTown(this.value)"></select>
-      <span class="laundry-town-hint">（衣服曬在家裡，只看這一地）</span>
+      <span class="laundry-town-hint" id="laundryScopeHint"></span>
     </div>
     <div id="laundryDetail"><span style="color:var(--muted)">載入中…</span></div>
   </div>
@@ -1767,12 +1767,20 @@ function renderAlertList(now, dayWord) {
 //
 // 而且曬衣服是在「家裡」，不是六個方向都曬，所以要指定一個地點。預設
 // 用生活圈權重最高的那個，使用者可以自己改（跟模式按鈕同一套 localStorage
-// 做法）。這裡刻意不做「六地取最壞」——那會讓 20 公里外的一場雷陣雨
-// 把自家院子的好天氣蓋掉，天天都說不能曬就等於沒有功能
+// 做法）。
+//
+// 但「只看自己那一格」是錯的——使用者實測打臉：新港預報好好的，民雄
+// 在暴雨。實際距離：溪口 4.3km、民雄 6.8km、北港 7.0km，對流胞本身就有
+// 5~20 公里大、時速 20~40 公里，7 公里外的雨半小時內就到你家院子。
+// 所以判斷範圍是「家 + 半徑內的鄰鎮」，而不是單一格。
+//
+// 另一邊也不能無限放大：朴子 15.3km、斗南 19.3km 那種距離的雷陣雨拿來
+// 否決自家的好天氣，就會天天說不能曬，等於沒有功能。半徑取 15 公里
 // ═══════════════════════════════════════════════════════════════
 const LAUNDRY_TOWN_KEY = 'rainDashboard.laundryTown';
 const LAUNDRY_START_HOUR = 6;  // 天亮前掛出去沒意義
 const LAUNDRY_END_HOUR = 18;   // 天黑後不會再乾，還會回潮
+const LAUNDRY_NEARBY_KM = 15;  // 這個半徑內的鄰鎮下雨，就當成會影響到自家
 
 // pop >= 40 就當成不能曬。40 不是新發明的門檻——它是對照表色階本來
 // 就有的第一條界線（見 getRainColor），沿用同一條線，不另外定義一套
@@ -1838,12 +1846,61 @@ function isBadForLaundry(slot) {
   return typeof slot.pop === 'number' && slot.pop >= LAUNDRY_POP_LIMIT;
 }
 
+function haversineKm(a, b) {
+  const R = 6371, rad = (d) => d * Math.PI / 180;
+  const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+  const h = Math.sin(dLat / 2) ** 2
+    + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// 家 + 半徑內的鄰鎮，由近到遠。回傳含距離，因為文案要講「幾公里外」——
+// 「民雄有雨」跟「民雄有雨（6.8公里外）」對使用者是兩種不同的資訊量
+function laundryScopeTowns(homeLabel) {
+  const coords = resolveTownCoords();
+  const home = coords[homeLabel];
+  if (!home) return [{ label: homeLabel, km: 0 }];
+
+  const others = Object.keys(DIRECTION_TOWNS)
+    .filter(l => l !== homeLabel && coords[l])
+    .map(l => ({ label: l, km: haversineKm(home, coords[l]) }))
+    .sort((a, b) => a.km - b.km);
+
+  const near = others.filter(o => o.km <= LAUNDRY_NEARBY_KM);
+  // 每個地點至少要有一個鄰居可參考：斗南最近的溪口是 15.1 公里，剛好卡在
+  // 半徑外，但「最近的那個」永遠比「完全沒有鄰居」有參考價值
+  if (!near.length && others.length) near.push(others[0]);
+  return [{ label: homeLabel, km: 0 }, ...near];
+}
+
+// 這個時間格裡，範圍內有哪些地點是不能曬的
+function laundrySlotThreats(scope, slotStart) {
+  const out = [];
+  for (const t of scope) {
+    const risk = cachedWeatherLayers[t.label]?.risk || [];
+    const slot = risk.find(r => r.start?.getTime() === slotStart.getTime());
+    if (slot && isBadForLaundry(slot)) out.push({ ...t, slot });
+  }
+  return out;
+}
+
+// 現況：範圍內有雨量站正在下雨。這是整張卡最急的情況——衣服已經掛在
+// 外面了，預報講什麼都比不上「隔壁現在正在下」
+function laundryLiveThreat(scope) {
+  for (const t of scope) {
+    if ((cctvStates[t.label] || 'unknown') === 'raining') return t;
+  }
+  return null;
+}
+
 function buildLaundryAdvice(label, now) {
   const { day, slots } = laundryWindowSlots(label, now);
   if (!day || !slots.length) return { status: 'nodata', label, day: null, slots: [] };
 
-  const firstBadIdx = slots.findIndex(isBadForLaundry);
-  const firstGoodIdx = slots.findIndex(s => !isBadForLaundry(s));
+  const scope = laundryScopeTowns(label);
+  const threatsBySlot = slots.map(s => laundrySlotThreats(scope, s.start));
+  const firstBadIdx = threatsBySlot.findIndex(t => t.length > 0);
+  const firstGoodIdx = threatsBySlot.findIndex(t => t.length === 0);
   const dayWord = day === 'tomorrow' ? '明天' : '今天';
   const hhmm = (d) => `${pad(d.getHours())}:00`;
 
@@ -1866,18 +1923,46 @@ function buildLaundryAdvice(label, now) {
   const humidity = laundryHumidity(label, slots);
   const exposure = aggregateExposureLevel(slots);
 
+  const reasons = [];
+
+  // 是哪個地點造成的要講清楚。自家有雨不用特別說（看時段表就知道），
+  // 但「你這裡好好的，是隔壁要下」一定要講——不然使用者看自家預報
+  // 一片晴朗卻被叫去收衣服，只會覺得程式壞了
+  if (firstBadIdx >= 0) {
+    const cause = threatsBySlot[firstBadIdx].find(t => t.km > 0);
+    const isHomeAlsoBad = threatsBySlot[firstBadIdx].some(t => t.km === 0);
+    if (cause && !isHomeAlsoBad) {
+      reasons.push(`${hhmm(slots[firstBadIdx].start)} <strong>${cause.label}</strong> 有雨（約${cause.km.toFixed(1)}公里外），會飄過來`);
+    }
+  }
+
   // 乾得快不快只在「可以曬」的時候才有意義——已經說不能曬了還講濕度
   // 是多餘的資訊
-  const reasons = [];
   if (status !== 'bad') {
     if (humidity !== null && humidity >= LAUNDRY_RH_HUMID) reasons.push(`濕度 ${humidity}%，不容易乾`);
     else if (humidity !== null && humidity <= LAUNDRY_RH_DRY) reasons.push(`濕度 ${humidity}%，乾得快`);
     if (exposure === 'sunny' || exposure === 'partlycloudy') reasons.push('日照充足');
     else if (exposure === 'overcast') reasons.push('整天偏陰，乾得慢');
+  } else {
+    reasons.push(`${dayWord}${LAUNDRY_START_HOUR}:00～${LAUNDRY_END_HOUR}:00 附近都有降雨機率`);
   }
-  if (status === 'bad') reasons.push(`${dayWord}${LAUNDRY_START_HOUR}:00～${LAUNDRY_END_HOUR}:00 都有降雨機率`);
 
-  return { status, label, day, dayWord, slots, headline, reasons, humidity, exposure };
+  // 現況壓過預報：衣服已經在外面，隔壁正在下雨就是現在要去收
+  const live = laundryLiveThreat(scope);
+  if (live) {
+    status = 'urgent';
+    headline = live.km === 0
+      ? '正在下雨，快去收'
+      : `${live.label} 正在下雨，先去收`;
+    reasons.unshift(live.km === 0
+      ? '雨量站顯示這裡現在正在下雨'
+      : `雨量站顯示 <strong>${live.label}</strong> 現在正在下雨（約${live.km.toFixed(1)}公里外）`);
+  }
+
+  return {
+    status, label, day, dayWord, slots, headline, reasons, humidity, exposure,
+    scope, threatsBySlot,
+  };
 }
 
 function laundrySummaryBadge(advice) {
@@ -1893,6 +1978,16 @@ function renderLaundryCard(now = new Date()) {
   }
 
   const advice = buildLaundryAdvice(laundryTown, now);
+
+  // 把「一起看的鄰鎮」寫出來，使用者才知道這張卡的判斷範圍到哪裡，
+  // 不會覺得自家預報明明沒事卻被叫去收衣服
+  const hintEl = document.getElementById('laundryScopeHint');
+  if (hintEl) {
+    const near = laundryScopeTowns(laundryTown).filter(t => t.km > 0);
+    hintEl.textContent = near.length
+      ? `（連 ${near.map(t => t.label).join('、')} 一起看，雨會飄過來）`
+      : '（附近沒有其他測點）';
+  }
 
   const badgeEl = document.getElementById('laundrySummaryBadge');
   if (badgeEl) {
@@ -1910,13 +2005,18 @@ function renderLaundryCard(now = new Date()) {
   }
 
   // 逐格列出來，讓使用者自己看得到結論是怎麼來的——跟②③一樣，
-  // 不要只丟一句結論叫人相信
-  const rows = advice.slots.map(s => {
-    const bad = isBadForLaundry(s);
+  // 不要只丟一句結論叫人相信。鄰鎮造成的風險要標出是哪一鎮，否則
+  // 自家那格寫著「多雲 20%」卻被標紅，看起來就像 bug
+  const rows = advice.slots.map((s, i) => {
+    const threats = advice.threatsBySlot?.[i] || [];
+    const bad = threats.length > 0;
+    const neighbour = threats.find(t => t.km > 0);
+    const homeBad = threats.some(t => t.km === 0);
     const popText = typeof s.pop === 'number' ? `${s.pop}%` : '—';
+    const via = (!homeBad && neighbour) ? `　←　${neighbour.label} 有雨` : '';
     return `<div class="laundry-slot${bad ? ' is-bad' : ''}">
       <span class="laundry-slot-time">${pad(s.start.getHours())}:00</span>
-      <span class="laundry-slot-desc">${s.text || ''}${s.text ? ' · ' : ''}降雨 ${popText}</span>
+      <span class="laundry-slot-desc">${s.text || ''}${s.text ? ' · ' : ''}降雨 ${popText}${via}</span>
     </div>`;
   }).join('');
 
